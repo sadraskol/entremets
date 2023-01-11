@@ -1,0 +1,8 @@
+Process <- 1..3:
+    begin read_committed
+        minors := pi[count](sigma[age < 18](users))
+        if minors < 2
+            xi(users){ age = 12 }
+    commit
+
+Property [](pi[count](sigma[age < 18](users)) < 2)
