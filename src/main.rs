@@ -67,7 +67,7 @@ struct Sigma {
 #[derive(PartialEq, Debug, Clone)]
 struct Violation {
     property: Property,
-    trace: Vec<usize>,
+    log: Vec<Trace>,
 }
 
 #[derive(Hash, Eq, PartialEq, Debug, Clone)]
@@ -123,13 +123,29 @@ struct HashableState {
 }
 
 #[derive(PartialEq, Debug, Clone)]
-struct State {
+struct Trace {
     pc: Vec<usize>,
     global: HashMap<String, Value>,
     locals: Vec<HashMap<String, Value>>,
 }
 
+#[derive(PartialEq, Debug, Clone)]
+struct State {
+    pc: Vec<usize>,
+    global: HashMap<String, Value>,
+    locals: Vec<HashMap<String, Value>>,
+    log: Vec<Trace>,
+}
+
 impl State {
+    fn trace(&self) -> Trace {
+        Trace {
+            pc: self.pc.clone(),
+            global: self.global.clone(),
+            locals: self.locals.clone(),
+        }
+    }
+
     fn hashable(&self) -> HashableState {
         HashableState {
             pc: self.pc.clone(),
@@ -280,11 +296,16 @@ fn check_property(state: &State, property: &Property) -> Value {
     eval_prop_local(state, &state.global, prop)
 }
 
-fn model_checker(clients: &Vec<Client>, properties: &Vec<Property>) -> Option<Violation> {
+struct Report {
+    violation: Option<Violation>,
+}
+
+fn model_checker(clients: &Vec<Client>, properties: &Vec<Property>) -> Report {
     let init_state = State {
         pc: clients.iter().map(|_| 0).collect(),
         global: HashMap::new(),
         locals: clients.iter().map(|_| HashMap::new()).collect(),
+        log: vec![],
     };
 
     let mut deq = VecDeque::from([init_state]);
@@ -300,23 +321,45 @@ fn model_checker(clients: &Vec<Client>, properties: &Vec<Property>) -> Option<Vi
 
         for property in properties {
             if check_property(&state, property) != Value::Bool(true) {
-                return Some(Violation {
-                    property: property.clone(),
-                    trace: state.pc,
-                });
+                let mut log = state.log.clone();
+                log.push(state.trace());
+                return Report {
+                    violation: Some
+                        (Violation {
+                            property: property.clone(),
+                            log,
+                        })
+                };
             }
         }
 
         state_checked += 1;
         for (idx, client) in clients.iter().enumerate() {
             if state.pc[idx] < client.statements.len() {
-                deq.push_back(apply_statement(&state, idx, client));
+                let mut new_state = apply_statement(&state, idx, client);
+                new_state.log.push(state.trace());
+                deq.push_back(new_state);
             }
         }
     }
     println!("state_checked {}", state_checked);
 
-    None
+    Report {
+        violation: None
+    }
+}
+
+fn summary(report: &Report) -> String {
+    if let Some(violation) = &report.violation {
+        let mut x = format!("Following property was wrong: {:?}\n", violation.property);
+        x.push_str("The following counter example was found:\n");
+        for trace in &violation.log {
+            x.push_str(&format!("{:?}\n", trace));
+        }
+        x
+    } else {
+        "No counter example found".to_string()
+    }
 }
 
 #[cfg(test)]
@@ -382,18 +425,13 @@ mod test {
                         },
                     },
                 ))))),
-                Box::new(Proposition::Literal(Value::Integer(1))),
+                Box::new(Proposition::Literal(Value::Integer(2))),
             ),
         )))];
 
-        let counter_example = model_checker(&clients, &properties);
+        let report = model_checker(&clients, &properties);
 
-        assert_eq!(
-            counter_example,
-            Some(Violation {
-                property: properties[0].clone(),
-                trace: vec![0, 1, 2, 0, 1, 2, 0, 1, 2],
-            })
-        )
+        println!("{}", summary(&report));
+        assert_eq!("".to_string(), summary(&report));
     }
 }
