@@ -111,8 +111,7 @@ impl<const N: usize> From<[(String, Value); N]> for Row {
 enum Value {
     Bool(bool),
     Integer(i16),
-    Row(Row),
-    Set(Vec<Value>),
+    Set(Vec<Row>),
 }
 
 #[derive(Hash, Eq, PartialEq, Debug, Clone)]
@@ -175,17 +174,12 @@ fn eval(state: &State, select: &Sigma) -> Value {
                 todo!()
             };
             for row in rows {
-                let rw = if let Value::Row(rw) = row {
-                    rw
-                } else {
-                    todo!()
-                };
-                let l = if let Value::Integer(l) = eval_prop_row(rw, &left) {
+                let l = if let Value::Integer(l) = eval_prop_row(row, &left) {
                     l
                 } else {
                     todo!()
                 };
-                let r = if let Value::Integer(r) = eval_prop_row(rw, &right) {
+                let r = if let Value::Integer(r) = eval_prop_row(row, &right) {
                     r
                 } else {
                     todo!()
@@ -280,7 +274,7 @@ fn apply_statement(state: &State, idx: usize, client: &Client) -> State {
             } else {
                 todo!()
             };
-            table.push(Value::Row(row.clone()));
+            table.push(row.clone());
             new_state.global.iter_mut();
             new_state
         }
@@ -349,12 +343,48 @@ fn model_checker(clients: &Vec<Client>, properties: &Vec<Property>) -> Report {
     }
 }
 
+fn sql_summary(global: &HashMap<String, Value>) -> String {
+    let mut x = String::new();
+    for (table, value) in global.iter() {
+        let rows = if let Value::Set(rows) = value { rows } else { todo!() };
+        if rows.is_empty() {
+            x.push_str(&format!("{}: empty\n", table));
+        } else {
+            x.push_str(&format!("--- {} ---\n", table));
+
+            for key in &rows[0].keys {
+                x.push_str(&format!("{},", key));
+            }
+            x.remove(x.len() - 1);
+            x.push_str("\n");
+
+            for row in rows {
+                for value in &row.values {
+                    x.push_str(&format!("{:?},", value));
+                }
+                x.remove(x.len() - 1);
+                x.push_str("\n");
+            }
+        }
+    }
+    x
+}
+
 fn summary(report: &Report) -> String {
     if let Some(violation) = &report.violation {
         let mut x = format!("Following property was wrong: {:?}\n", violation.property);
         x.push_str("The following counter example was found:\n");
-        for trace in &violation.log {
-            x.push_str(&format!("{:?}\n", trace));
+
+
+        x.push_str("Init state: empty\n");
+        let mut last_trace = &violation.log[0];
+        for trace in &violation.log[1..] {
+            let (index, _) = (trace.pc.iter().zip(&last_trace.pc)).enumerate().filter(|(_i, (a, b))| a != b).next().expect("no pc changed in between states");
+            x.push_str(&format!("Process {}: **stmt**\n", index));
+            x.push_str(&format!("Local State {:?}:\n", trace.locals[index]));
+            x.push_str("Global State:\n");
+            x.push_str(&sql_summary(&trace.global));
+            last_trace = trace;
         }
         x
     } else {
