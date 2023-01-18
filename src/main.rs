@@ -1,4 +1,4 @@
-extern crate core;
+mod parser;
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -174,12 +174,12 @@ fn eval(state: &State, select: &Sigma) -> Value {
                 todo!()
             };
             for row in rows {
-                let l = if let Value::Integer(l) = eval_prop_row(row, &left) {
+                let l = if let Value::Integer(l) = eval_prop_row(row, left) {
                     l
                 } else {
                     todo!()
                 };
-                let r = if let Value::Integer(r) = eval_prop_row(row, &right) {
+                let r = if let Value::Integer(r) = eval_prop_row(row, right) {
                     r
                 } else {
                     todo!()
@@ -197,12 +197,12 @@ fn eval(state: &State, select: &Sigma) -> Value {
 fn eval_prop_local(state: &State, local: &HashMap<String, Value>, prop: &Proposition) -> Value {
     match prop {
         Proposition::LesserEqual(left, right) => {
-            let l = if let Value::Integer(l) = eval_prop_local(state, local, &left) {
+            let l = if let Value::Integer(l) = eval_prop_local(state, local, left) {
                 l
             } else {
                 todo!()
             };
-            let r = if let Value::Integer(r) = eval_prop_local(state, local, &right) {
+            let r = if let Value::Integer(r) = eval_prop_local(state, local, right) {
                 r
             } else {
                 todo!()
@@ -210,7 +210,7 @@ fn eval_prop_local(state: &State, local: &HashMap<String, Value>, prop: &Proposi
             Value::Bool(l <= r)
         }
         Proposition::Count(set) => {
-            let s = if let Value::Set(s) = eval_prop_local(state, local, &set) {
+            let s = if let Value::Set(s) = eval_prop_local(state, local, set) {
                 s
             } else {
                 todo!()
@@ -229,8 +229,7 @@ fn eval_prop_row(row: &Row, prop: &Proposition) -> Value {
         Proposition::Literal(value) => value.clone(),
         Proposition::Var(v) => row
             .get(&v.name)
-            .expect(&format!("couldn't find column '{}' in table...", v.name))
-            .clone(),
+            .expect(&format!("couldn't find column '{}' in table...", v.name)),
         _ => panic!("{:?} is not implemented for row evaluation", prop),
     }
 }
@@ -248,11 +247,11 @@ fn apply_statement(state: &State, idx: usize, client: &Client) -> State {
         }
         Statement::Assignment(v, expression) => {
             new_state.pc[idx] += 1;
-            new_state.locals[idx].insert(v.name.clone(), eval(state, &expression));
+            new_state.locals[idx].insert(v.name.clone(), eval(state, expression));
             new_state
         }
         Statement::If(condition, offset) => {
-            let proposition_res = eval_prop_local(&state, &state.locals[idx], condition);
+            let proposition_res = eval_prop_local(state, &state.locals[idx], condition);
             if proposition_res == Value::Bool(true) {
                 new_state.pc[idx] += 1;
                 new_state
@@ -294,7 +293,7 @@ struct Report {
     violation: Option<Violation>,
 }
 
-fn model_checker(clients: &Vec<Client>, properties: &Vec<Property>) -> Report {
+fn model_checker(clients: &[Client], properties: &Vec<Property>) -> Report {
     let init_state = State {
         pc: clients.iter().map(|_| 0).collect(),
         global: HashMap::new(),
@@ -318,11 +317,10 @@ fn model_checker(clients: &Vec<Client>, properties: &Vec<Property>) -> Report {
                 let mut log = state.log.clone();
                 log.push(state.trace());
                 return Report {
-                    violation: Some
-                        (Violation {
-                            property: property.clone(),
-                            log,
-                        })
+                    violation: Some(Violation {
+                        property: property.clone(),
+                        log,
+                    }),
                 };
             }
         }
@@ -338,15 +336,17 @@ fn model_checker(clients: &Vec<Client>, properties: &Vec<Property>) -> Report {
     }
     println!("state_checked {}", state_checked);
 
-    Report {
-        violation: None
-    }
+    Report { violation: None }
 }
 
 fn sql_summary(global: &HashMap<String, Value>) -> String {
     let mut x = String::new();
     for (table, value) in global.iter() {
-        let rows = if let Value::Set(rows) = value { rows } else { todo!() };
+        let rows = if let Value::Set(rows) = value {
+            rows
+        } else {
+            todo!()
+        };
         if rows.is_empty() {
             x.push_str(&format!("{}: empty\n", table));
         } else {
@@ -356,14 +356,14 @@ fn sql_summary(global: &HashMap<String, Value>) -> String {
                 x.push_str(&format!("{},", key));
             }
             x.remove(x.len() - 1);
-            x.push_str("\n");
+            x.push('\n');
 
             for row in rows {
                 for value in &row.values {
                     x.push_str(&format!("{:?},", value));
                 }
                 x.remove(x.len() - 1);
-                x.push_str("\n");
+                x.push('\n');
             }
         }
     }
@@ -375,11 +375,13 @@ fn summary(report: &Report) -> String {
         let mut x = format!("Following property was wrong: {:?}\n", violation.property);
         x.push_str("The following counter example was found:\n");
 
-
         x.push_str("Init state: empty\n");
         let mut last_trace = &violation.log[0];
         for trace in &violation.log[1..] {
-            let (index, _) = (trace.pc.iter().zip(&last_trace.pc)).enumerate().filter(|(_i, (a, b))| a != b).next().expect("no pc changed in between states");
+            let (index, _) = (trace.pc.iter().zip(&last_trace.pc))
+                .enumerate()
+                .find(|(_i, (a, b))| a != b)
+                .expect("no pc changed in between states");
             x.push_str(&format!("Process {}: **stmt**\n", index));
             x.push_str(&format!("Local State {:?}:\n", trace.locals[index]));
             x.push_str("Global State:\n");
