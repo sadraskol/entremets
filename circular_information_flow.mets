@@ -1,0 +1,21 @@
+init do
+    insert into users (id, age) values (1, 10), (2, 20)
+end
+
+process do
+    begin read_committed
+    update users set age = 11 where id = 1
+    t1_age := select age from users where id = 2
+finally
+    commit
+end
+
+process do
+    begin read_committed
+    update users set age = 22 where id = 2
+    t2_age := select age from users where id = 1
+finally
+    commit
+end
+
+property = eventually<t1_age = 20 and t2_age = 10>
