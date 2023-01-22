@@ -25,6 +25,16 @@ pub struct Token {
     pub position: Position,
 }
 
+impl Token {
+    pub fn uninitialized() -> Self {
+        Token {
+            kind: TokenKind::Error,
+            lexeme: "".to_string(),
+            position: Position::new(),
+        }
+    }
+}
+
 #[derive(PartialEq, Eq, Debug, Clone)]
 pub enum TokenKind {
     // \n
@@ -37,6 +47,8 @@ pub enum TokenKind {
     Star,
     // +
     Plus,
+    // %
+    Percent,
     // =
     Equal,
     // <-
@@ -89,6 +101,10 @@ pub enum TokenKind {
     Set,
     // is
     Is,
+    // in
+    In,
+    // and
+    And,
     // always
     Always,
     // never,
@@ -111,6 +127,8 @@ pub enum TokenKind {
     Number,
     // \eof
     Eof,
+    // Error special case for the start of the parsing
+    Error,
 }
 
 #[derive(Copy, Clone)]
@@ -128,10 +146,12 @@ impl Cursor {
             col: 1,
         }
     }
+
     fn advance(&mut self) {
         self.index += 1;
         self.col += 1;
     }
+
     fn newline(&mut self) {
         self.index += 1;
         self.col = 1;
@@ -139,7 +159,7 @@ impl Cursor {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ScannerError {
     expected: String,
     lexeme: String,
@@ -191,6 +211,7 @@ impl Scanner {
                 '>' => self.make_token(TokenKind::RightCarret),
                 ',' => self.make_token(TokenKind::Comma),
                 '+' => self.make_token(TokenKind::Plus),
+                '%' => self.make_token(TokenKind::Percent),
                 '*' => self.make_token(TokenKind::Star),
                 ':' => {
                     if self.matches('=') {
@@ -224,8 +245,9 @@ impl Scanner {
     fn identifier_type(&self) -> TokenKind {
         match self.source.chars().nth(self.start.index).unwrap() {
             'a' => {
-                if self.current.index - self.start.index > 3 {
+                if self.current.index - self.start.index > 2 {
                     match self.source.chars().nth(self.start.index + 1).unwrap() {
+                        'n' => self.check_keyword(2, "d", TokenKind::And),
                         'b' => self.check_keyword(2, "ort", TokenKind::Abort),
                         'l' => self.check_keyword(2, "ways", TokenKind::Always),
                         _ => TokenKind::Identifier,
@@ -250,22 +272,23 @@ impl Scanner {
                 }
             }
             'f' => self.check_keyword(1, "rom", TokenKind::From),
-            'i' => {
-                if self.current.index - self.start.index > 1 {
-                    match self.source.chars().nth(self.start.index + 1).unwrap() {
-                        's' => self.check_keyword(2, "", TokenKind::Is),
-                        'n' => match self.source.chars().nth(self.start.index + 2).unwrap() {
-                            'i' => self.check_keyword(3, "t", TokenKind::Init),
-                            's' => self.check_keyword(3, "ert", TokenKind::Insert),
-                            't' => self.check_keyword(3, "o", TokenKind::Into),
-                            _ => TokenKind::Identifier,
-                        },
+            'i' => match self.current.index - self.start.index {
+                2 => match self.source.chars().nth(self.start.index + 1).unwrap() {
+                    's' => self.check_keyword(2, "", TokenKind::Is),
+                    'n' => self.check_keyword(2, "", TokenKind::In),
+                    _ => TokenKind::Identifier,
+                },
+                x if x > 2 => match self.source.chars().nth(self.start.index + 1).unwrap() {
+                    'n' => match self.source.chars().nth(self.start.index + 2).unwrap() {
+                        'i' => self.check_keyword(3, "t", TokenKind::Init),
+                        's' => self.check_keyword(3, "ert", TokenKind::Insert),
+                        't' => self.check_keyword(3, "o", TokenKind::Into),
                         _ => TokenKind::Identifier,
-                    }
-                } else {
-                    TokenKind::Identifier
-                }
-            }
+                    },
+                    _ => TokenKind::Identifier,
+                },
+                _ => TokenKind::Identifier,
+            },
             'n' => self.check_keyword(1, "ever", TokenKind::Never),
             'l' => {
                 if self.current.index - self.start.index > 1 {
