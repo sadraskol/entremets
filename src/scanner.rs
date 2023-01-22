@@ -1,20 +1,31 @@
-#[derive(Debug)]
-struct Position {
-    start_line: usize,
-    start_col: usize,
+#[derive(PartialEq, Debug, Clone)]
+pub struct Position {
+    pub start_line: usize,
+    pub start_col: usize,
 
-    end_line: usize,
-    end_col: usize,
+    pub end_line: usize,
+    pub end_col: usize,
 }
 
-#[derive(Debug)]
+impl Position {
+    pub fn new() -> Self {
+        Position {
+            start_line: 1,
+            start_col: 1,
+            end_line: 1,
+            end_col: 1,
+        }
+    }
+}
+
+#[derive(PartialEq, Debug, Clone)]
 pub struct Token {
     pub kind: TokenKind,
-    lexeme: String,
-    position: Position,
+    pub lexeme: String,
+    pub position: Position,
 }
 
-#[derive(PartialEq, Eq, Debug)]
+#[derive(PartialEq, Eq, Debug, Clone)]
 pub enum TokenKind {
     // \n
     Newline,
@@ -48,8 +59,6 @@ pub enum TokenKind {
     LeftCarret,
     // >
     RightCarret,
-    // if
-    If,
     // else
     Else,
     // do
@@ -60,6 +69,8 @@ pub enum TokenKind {
     Begin,
     // commit
     Commit,
+    // abort
+    Abort,
     // select
     Select,
     // from
@@ -80,14 +91,20 @@ pub enum TokenKind {
     Is,
     // always
     Always,
+    // never,
+    Never,
     // eventually
     Eventually,
     // property
     Property,
     // process
     Process,
+    // latch
+    Latch,
     // init
     Init,
+    // let
+    Let,
     // xxxx
     Identifier,
     // 1111else
@@ -206,7 +223,17 @@ impl Scanner {
 
     fn identifier_type(&self) -> TokenKind {
         match self.source.chars().nth(self.start.index).unwrap() {
-            'a' => self.check_keyword(1, "lways", TokenKind::Always),
+            'a' => {
+                if self.current.index - self.start.index > 3 {
+                    match self.source.chars().nth(self.start.index + 1).unwrap() {
+                        'b' => self.check_keyword(2, "ort", TokenKind::Abort),
+                        'l' => self.check_keyword(2, "ways", TokenKind::Always),
+                        _ => TokenKind::Identifier,
+                    }
+                } else {
+                    TokenKind::Identifier
+                }
+            }
             'b' => self.check_keyword(1, "egin", TokenKind::Begin),
             'c' => self.check_keyword(1, "ommit", TokenKind::Commit),
             'd' => self.check_keyword(1, "o", TokenKind::Do),
@@ -226,16 +253,25 @@ impl Scanner {
             'i' => {
                 if self.current.index - self.start.index > 1 {
                     match self.source.chars().nth(self.start.index + 1).unwrap() {
-                        'f' => self.check_keyword(2, "", TokenKind::If),
                         's' => self.check_keyword(2, "", TokenKind::Is),
-                        'n' => {
-                            match self.source.chars().nth(self.start.index + 2).unwrap() {
-                                'i' => self.check_keyword(3, "t", TokenKind::Init),
-                                's' => self.check_keyword(3, "ert", TokenKind::Insert),
-                                't' => self.check_keyword(3, "o", TokenKind::Into),
-                                _ => TokenKind::Identifier,
-                            }
-                        }
+                        'n' => match self.source.chars().nth(self.start.index + 2).unwrap() {
+                            'i' => self.check_keyword(3, "t", TokenKind::Init),
+                            's' => self.check_keyword(3, "ert", TokenKind::Insert),
+                            't' => self.check_keyword(3, "o", TokenKind::Into),
+                            _ => TokenKind::Identifier,
+                        },
+                        _ => TokenKind::Identifier,
+                    }
+                } else {
+                    TokenKind::Identifier
+                }
+            }
+            'n' => self.check_keyword(1, "ever", TokenKind::Never),
+            'l' => {
+                if self.current.index - self.start.index > 1 {
+                    match self.source.chars().nth(self.start.index + 1).unwrap() {
+                        'a' => self.check_keyword(2, "tch", TokenKind::Latch),
+                        'e' => self.check_keyword(2, "t", TokenKind::Let),
                         _ => TokenKind::Identifier,
                     }
                 } else {
@@ -319,12 +355,12 @@ impl Scanner {
         let length = rest.len();
         if self.current.index - self.start.index == start + length
             && rest
-            == self
-            .source
-            .chars()
-            .skip(self.start.index + start)
-            .take(length)
-            .collect::<String>()
+                == self
+                    .source
+                    .chars()
+                    .skip(self.start.index + start)
+                    .take(length)
+                    .collect::<String>()
         {
             kind
         } else {

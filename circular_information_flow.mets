@@ -5,16 +5,16 @@ end
 process do
     begin read_committed
     update users set age = 11 where id = 1
-    t1_age := select age from users where id = 2
-finally
+    let t1_age := select age from users where id = 2
+latch
     commit
 end
 
 process do
     begin read_committed
     update users set age = 22 where id = 2
-    t2_age := select age from users where id = 1
-finally
+    let t2_age := select age from users where id = 1
+latch
     commit
 end
 

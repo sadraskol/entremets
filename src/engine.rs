@@ -1,106 +1,5 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
-#[derive(PartialEq, Debug)]
-struct Client {
-    name: String,
-    statements: Vec<Statement>,
-}
-
-#[derive(PartialEq, Debug)]
-enum Statement {
-    Begin(IsolationLevel),
-    Commit,
-    Assignment(Variable, Sigma),
-    // Assignment(Variable, Expression)
-    If(Proposition, usize),
-    // offset
-    Insert(Relation, Row),
-}
-
-#[derive(PartialEq, Debug)]
-enum IsolationLevel {
-    ReadCommitted,
-}
-
-#[derive(PartialEq, Debug)]
-struct Transaction {
-    isolation: IsolationLevel,
-    statement: Box<Statement>,
-}
-
-#[derive(PartialEq, Debug, Clone)]
-struct Variable {
-    name: String,
-}
-
-#[derive(PartialEq, Debug, Clone)]
-struct Relation {
-    name: String,
-}
-
-#[derive(PartialEq, Debug, Clone)]
-struct Property(Proposition);
-
-#[derive(PartialEq, Debug, Clone)]
-enum Proposition {
-    Count(Box<Proposition>),
-    Sigma(Box<Sigma>),
-    LesserEqual(Box<Proposition>, Box<Proposition>),
-    Literal(Value),
-    Always(Box<Proposition>),
-    // Literal(Literal)
-    Var(Variable),
-}
-
-#[derive(PartialEq, Debug, Clone)]
-struct Sigma {
-    formula: Proposition,
-    relation: Relation,
-}
-
-#[derive(PartialEq, Debug, Clone)]
-struct Violation {
-    property: Property,
-    log: Vec<Trace>,
-}
-
-#[derive(Hash, Eq, PartialEq, Debug, Clone)]
-struct Row {
-    keys: Vec<String>,
-    values: Vec<Value>,
-}
-
-impl Row {
-    pub fn get(&self, key: &String) -> Option<Value> {
-        for (i, k) in self.keys.iter().enumerate() {
-            if k == key {
-                return Some(self.values[i].clone());
-            }
-        }
-        None
-    }
-}
-
-impl Row {
-    fn new() -> Self {
-        Row {
-            keys: vec![],
-            values: vec![],
-        }
-    }
-}
-
-impl<const N: usize> From<[(String, Value); N]> for Row {
-    fn from(arr: [(String, Value); N]) -> Self {
-        let mut res = Row::new();
-        for entry in arr {
-            res.keys.push(entry.0);
-            res.values.push(entry.1);
-        }
-        res
-    }
-}
-
 #[derive(Hash, Eq, PartialEq, Debug, Clone)]
 enum Value {
     Bool(bool),
@@ -229,6 +128,49 @@ fn eval_prop_row(row: &Row, prop: &Proposition) -> Value {
     }
 }
 
+#[derive(PartialEq, Debug, Clone)]
+struct Violation {
+    property: Property,
+    log: Vec<Trace>,
+}
+
+#[derive(Hash, Eq, PartialEq, Debug, Clone)]
+struct Row {
+    keys: Vec<String>,
+    values: Vec<Value>,
+}
+
+impl Row {
+    pub fn get(&self, key: &String) -> Option<Value> {
+        for (i, k) in self.keys.iter().enumerate() {
+            if k == key {
+                return Some(self.values[i].clone());
+            }
+        }
+        None
+    }
+}
+
+impl Row {
+    fn new() -> Self {
+        Row {
+            keys: vec![],
+            values: vec![],
+        }
+    }
+}
+
+impl<const N: usize> From<[(String, Value); N]> for Row {
+    fn from(arr: [(String, Value); N]) -> Self {
+        let mut res = Row::new();
+        for entry in arr {
+            res.keys.push(entry.0);
+            res.values.push(entry.1);
+        }
+        res
+    }
+}
+
 fn apply_statement(state: &State, idx: usize, client: &Client) -> State {
     let mut new_state = state.clone();
     match &client.statements[state.pc[idx]] {
@@ -244,18 +186,6 @@ fn apply_statement(state: &State, idx: usize, client: &Client) -> State {
             new_state.pc[idx] += 1;
             new_state.locals[idx].insert(v.name.clone(), eval(state, expression));
             new_state
-        }
-        Statement::If(condition, offset) => {
-            let proposition_res = eval_prop_local(state, &state.locals[idx], condition);
-            if proposition_res == Value::Bool(true) {
-                new_state.pc[idx] += 1;
-                new_state
-            } else if proposition_res == Value::Bool(false) {
-                new_state.pc[idx] += 1 + offset;
-                new_state
-            } else {
-                panic!("condition is not a boolean");
-            }
         }
         Statement::Insert(relation, row) => {
             new_state.pc[idx] += 1;
@@ -389,76 +319,76 @@ fn summary(report: &Report) -> String {
     }
 }
 
-#[cfg(test)]
-mod test {
-    use crate::engine::*;
-
-    #[test]
-    fn run_process_with_correct_isolation_level() {
-        let mut clients = vec![];
-        for i in 1..=3 {
-            clients.push(Client {
-                name: i.to_string(),
-                statements: vec![
-                    Statement::Begin(IsolationLevel::ReadCommitted),
-                    Statement::Assignment(
-                        Variable {
-                            name: "under_18".to_string(),
-                        },
-                        Sigma {
-                            formula: Proposition::LesserEqual(
-                                Box::new(Proposition::Var(Variable {
-                                    name: "age".to_string(),
-                                })),
-                                Box::new(Proposition::Literal(Value::Integer(18))),
-                            ),
-                            relation: Relation {
-                                name: "users".to_string(),
-                            },
-                        },
-                    ),
-                    Statement::If(
-                        Proposition::LesserEqual(
-                            Box::new(Proposition::Count(Box::new(Proposition::Var(Variable {
-                                name: "under_18".to_string(),
-                            })))),
-                            Box::new(Proposition::Literal(Value::Integer(1))),
-                        ),
-                        1,
-                    ),
-                    Statement::Insert(
-                        Relation {
-                            name: "users".to_string(),
-                        },
-                        Row::from([("age".to_string(), Value::Integer(12))]),
-                    ),
-                    Statement::Commit,
-                ],
-            });
-        }
-
-        let properties = vec![Property(Proposition::Always(Box::new(
-            Proposition::LesserEqual(
-                Box::new(Proposition::Count(Box::new(Proposition::Sigma(Box::new(
-                    Sigma {
-                        formula: Proposition::LesserEqual(
-                            Box::new(Proposition::Var(Variable {
-                                name: "age".to_string(),
-                            })),
-                            Box::new(Proposition::Literal(Value::Integer(18))),
-                        ),
-                        relation: Relation {
-                            name: "users".to_string(),
-                        },
-                    },
-                ))))),
-                Box::new(Proposition::Literal(Value::Integer(2))),
-            ),
-        )))];
-
-        let report = model_checker(&clients, &properties);
-
-        println!("{}", summary(&report));
-        assert_eq!("".to_string(), summary(&report));
-    }
-}
+// #[cfg(test)]
+// mod test {
+//     use crate::engine::*;
+//
+//     #[test]
+//     fn run_process_with_correct_isolation_level() {
+//         let mut clients = vec![];
+//         for i in 1..=3 {
+//             clients.push(Client {
+//                 name: i.to_string(),
+//                 statements: vec![
+//                     Statement::Begin(IsolationLevel::ReadCommitted),
+//                     Statement::Assignment(
+//                         Variable {
+//                             name: "under_18".to_string(),
+//                         },
+//                         Sigma {
+//                             formula: Proposition::LesserEqual(
+//                                 Box::new(Proposition::Var(Variable {
+//                                     name: "age".to_string(),
+//                                 })),
+//                                 Box::new(Proposition::Literal(Value::Integer(18))),
+//                             ),
+//                             relation: Relation {
+//                                 name: "users".to_string(),
+//                             },
+//                         },
+//                     ),
+//                     Statement::If(
+//                         Proposition::LesserEqual(
+//                             Box::new(Proposition::Count(Box::new(Proposition::Var(Variable {
+//                                 name: "under_18".to_string(),
+//                             })))),
+//                             Box::new(Proposition::Literal(Value::Integer(1))),
+//                         ),
+//                         1,
+//                     ),
+//                     Statement::Insert(
+//                         Relation {
+//                             name: "users".to_string(),
+//                         },
+//                         Row::from([("age".to_string(), Value::Integer(12))]),
+//                     ),
+//                     Statement::Commit,
+//                 ],
+//             });
+//         }
+//
+//         let properties = vec![Property(Proposition::Always(Box::new(
+//             Proposition::LesserEqual(
+//                 Box::new(Proposition::Count(Box::new(Proposition::Sigma(Box::new(
+//                     Sigma {
+//                         formula: Proposition::LesserEqual(
+//                             Box::new(Proposition::Var(Variable {
+//                                 name: "age".to_string(),
+//                             })),
+//                             Box::new(Proposition::Literal(Value::Integer(18))),
+//                         ),
+//                         relation: Relation {
+//                             name: "users".to_string(),
+//                         },
+//                     },
+//                 ))))),
+//                 Box::new(Proposition::Literal(Value::Integer(2))),
+//             ),
+//         )))];
+//
+//         let report = model_checker(&clients, &properties);
+//
+//         println!("{}", summary(&report));
+//         assert_eq!("".to_string(), summary(&report));
+//     }
+// }
