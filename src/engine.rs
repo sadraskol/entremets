@@ -76,17 +76,15 @@ pub fn model_checker(mets: Mets) -> Report {
     let mut visited = HashSet::new();
 
     while let Some(state) = deq.pop_front() {
-        // println!("checking for state: {:?}", state);
         if visited.contains(&state.hashable()) {
             continue;
         }
         visited.insert(state.hashable());
 
-        println!("Explore state: {:?}", state);
         let mut interpreter = Interpreter::new(&state);
 
         for property in &mets.properties {
-            if interpreter.check_property(property) {
+            if !interpreter.check_property(property) {
                 let mut log = state.log.clone();
                 log.push(state.trace());
                 return Report {
@@ -149,13 +147,15 @@ impl Interpreter {
 
     fn check_property(&mut self, property: &Statement) -> bool {
         match property {
-            Statement::Always(always) => matches!(self.interpret(always), Value::Bool(true)),
+            Statement::Always(always) => {
+                let value = self.interpret(always);
+                value == Value::Bool(true)
+            }
             _ => panic!("unsupported property: {:?}", property),
         }
     }
 
     fn statement(&mut self, statement: &Statement) {
-        println!("Execute: {:?}", statement);
         match statement {
             Statement::Begin(_) => {}
             Statement::Commit => {}
@@ -292,6 +292,14 @@ impl Interpreter {
                 res.push(row.to_value(&columns))
             }
         }
+
+        if res.len() == 1 {
+            let row = if let Value::Tuple(x) = &res[0] { x } else { todo!() };
+            if row.len() == 1 {
+                return row[0].clone();
+            }
+        }
+
         Value::Set(res)
     }
 
@@ -344,6 +352,7 @@ impl Interpreter {
             Operator::Equal => {
                 let left = self.interpret(left);
                 let right = self.interpret(right);
+
                 Value::Bool(left == right)
             }
             Operator::LessEqual => {
@@ -405,16 +414,10 @@ impl Interpreter {
                 }
                 SqlContext::Update { table, row } => {
                     let rows = self.next_state.sql.tables.get_mut(table).unwrap();
-                    let mut updated = false;
                     for r in rows {
                         if r == row {
-                            if r.0.insert(name.clone(), value.clone()).is_some() {
-                                updated = true;
-                            }
+                            r.0.insert(name.clone(), value.clone());
                         }
-                    }
-                    if !updated {
-                        println!("wow");
                     }
                 }
             }
@@ -446,8 +449,11 @@ pub fn summary(report: &Report) -> String {
         let mut x = "Following property was violated:\n".to_string();
         x.push_str("The following counter example was found:\n");
 
-        x.push_str("Init state: empty\n");
         let mut last_trace = &violation.log[0];
+        x.push_str(&format!("Local State {:?}:\n", last_trace.locals));
+        x.push_str("Global State:\n");
+        x.push_str(&sql_summary(&last_trace.sql));
+
         for trace in &violation.log[1..] {
             let (index, _) = (trace.pc.iter().zip(&last_trace.pc))
                 .enumerate()
