@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+use crate::engine::{model_checker, summary};
 use crate::parser::Parser;
 use std::env;
 use std::fs::read_to_string;
@@ -17,7 +18,10 @@ fn main() {
     let res = parser.compile();
 
     match res {
-        Ok(_mets) => {} //println!("{:?}", _mets)
+        Ok(mets) => {
+            let report = model_checker(mets);
+            println!("{}", summary(&report));
+        }
         Err(message) => println!("{}", message),
     }
 }

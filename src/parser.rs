@@ -6,10 +6,7 @@ use std::num::ParseIntError;
 use std::str::FromStr;
 
 #[derive(Debug, Clone, PartialEq)]
-enum Statement {
-    // declarations
-    Assignment(Variable, Expression),
-
+pub enum Statement {
     Begin(IsolationLevel),
     Commit,
     Abort,
@@ -22,18 +19,18 @@ enum Statement {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-enum IsolationLevel {
+pub enum IsolationLevel {
     ReadCommitted,
 }
 
 #[derive(PartialEq, Debug, Clone)]
-struct Variable {
-    name: String,
+pub struct Variable {
+    pub name: String,
     token: Token,
 }
 
 #[derive(PartialEq, Debug, Clone)]
-enum Expression {
+pub enum Expression {
     Select {
         columns: Vec<Variable>,
         from: Variable,
@@ -54,6 +51,7 @@ enum Expression {
         operator: Operator,
         right: Box<Expression>,
     },
+    Assignment(Variable, Box<Expression>),
     Var(Variable),
     Integer(i16),
     Set(Vec<Expression>),
@@ -61,7 +59,7 @@ enum Expression {
 }
 
 #[derive(PartialEq, Debug, Clone)]
-enum Operator {
+pub enum Operator {
     Add,
     Multiply,
     Rem,
@@ -101,9 +99,9 @@ impl From<ParseIntError> for ParserError {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Mets {
-    init: Vec<Statement>,
-    processes: Vec<Vec<Statement>>,
-    properties: Vec<Statement>,
+    pub init: Vec<Statement>,
+    pub processes: Vec<Vec<Statement>>,
+    pub properties: Vec<Statement>,
 }
 
 pub type Res<T> = Result<T, ParserError>;
@@ -266,12 +264,9 @@ impl Parser {
     }
 
     fn assignment_statement(&mut self) -> Res<Statement> {
-        let var = self.parse_variable("Expect variable name")?;
-        self.consume(TokenKind::ColonEqual, "Expect := after variable name")?;
+        let expr = self.assignment()?;
 
-        let expr = self.expression()?;
-
-        Ok(Statement::Assignment(var, expr))
+        Ok(Statement::Expression(expr))
     }
 
     fn parse_variable(&mut self, expected: &str) -> Res<Variable> {
@@ -345,7 +340,23 @@ impl Parser {
     }
 
     fn expression(&mut self) -> Res<Expression> {
-        self.and()
+        self.assignment()
+    }
+
+    fn assignment(&mut self) -> Res<Expression> {
+        let mut expr = self.and()?;
+
+        if self.matches(TokenKind::ColonEqual)? {
+            let name = if let Expression::Var(name) = expr {
+                name
+            } else {
+                todo!()
+            };
+            let value = self.assignment()?;
+            expr = Expression::Assignment(name, Box::new(value));
+        }
+
+        Ok(expr)
     }
 
     fn and(&mut self) -> Res<Expression> {

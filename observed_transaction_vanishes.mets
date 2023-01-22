@@ -4,8 +4,8 @@ end
 
 process do
     begin read_committed
-    update users set age = 11 where id = 1
-    update users set age = 19 where id = 2
+    update users set age := 11 where id = 1
+    update users set age := 19 where id = 2
 latch
 latch
     commit
@@ -13,10 +13,10 @@ end
 
 process do
     begin read_committed
-    update users set age = 12 where id = 1
+    update users set age := 12 where id = 1
 latch
 latch
-    update users set age = 18 where id = 2
+    update users set age := 18 where id = 2
 latch
     commit
 end

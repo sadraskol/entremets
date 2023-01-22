@@ -4,7 +4,7 @@ end
 
 process do
     begin read_committed
-    update users set age = 101 where id = 1
+    update users set age := 101 where id = 1
 latch
     commit
 end
@@ -12,7 +12,7 @@ end
 process do
     begin read_committed
     let age := select age from users where id = 1
-    update users set age = 11 where id = 1
+    update users set age := 11 where id = 1
     commit
 end
 
