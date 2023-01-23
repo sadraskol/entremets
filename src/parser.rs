@@ -350,7 +350,10 @@ impl Parser {
             let name = if let Expression::Var(name) = expr {
                 name
             } else {
-                todo!()
+                return Err(Unexpected(format!(
+                    "Expected variable before := assignment at {:?}",
+                    self.previous
+                )));
             };
             let value = self.assignment()?;
             expr = Expression::Assignment(name, Box::new(value));

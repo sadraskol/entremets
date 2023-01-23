@@ -18,10 +18,10 @@ fn main() {
     let res = parser.compile();
 
     match res {
-        Ok(mets) => {
-            let report = model_checker(mets);
-            println!("{}", summary(&report));
-        }
+        Ok(mets) => match model_checker(mets) {
+            Ok(report) => println!("{}", summary(&report)),
+            Err(message) => println!("{}", message),
+        },
         Err(message) => println!("{}", message),
     }
 }
