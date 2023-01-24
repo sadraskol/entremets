@@ -18,7 +18,7 @@ pub enum Statement {
     Eventually(Expression),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum IsolationLevel {
     ReadCommitted,
 }

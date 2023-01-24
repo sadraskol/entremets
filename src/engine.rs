@@ -1,7 +1,7 @@
-use crate::engine::CheckerError::{TypeError, Unexpected};
+use crate::engine::CheckerError::{TypeError, UndefinedVariable, Unexpected};
 use crate::parser::{Expression, Mets, Operator, Statement, Variable};
+use crate::sql_engine::{HashableRow, Row, SqlDatabase, SqlEngineError, TransactionId};
 use std::collections::{HashMap, HashSet, VecDeque};
-use crate::sql_engine::{HashableRow, Row, SqlDatabase};
 
 #[derive(Hash, Eq, PartialEq, Debug, Clone)]
 pub enum Value {
@@ -29,6 +29,7 @@ pub struct Trace {
 #[derive(PartialEq, Debug, Clone)]
 struct State {
     pc: Vec<usize>,
+    txs: Vec<Option<TransactionId>>,
     sql: SqlDatabase,
     locals: HashMap<String, Value>,
     log: Vec<Trace>,
@@ -68,6 +69,14 @@ pub struct Report {
 pub enum CheckerError {
     Unexpected(String),
     TypeError(Expression, String),
+    UndefinedVariable(Variable),
+    SqlEngineError(SqlEngineError),
+}
+
+impl From<SqlEngineError> for CheckerError {
+    fn from(value: SqlEngineError) -> Self {
+        CheckerError::SqlEngineError(value)
+    }
 }
 
 type Res<T> = Result<T, CheckerError>;
@@ -79,6 +88,8 @@ pub fn model_checker(mets: Mets) -> Result<Report, String> {
         Err(err) => Err(match err {
             Unexpected(message) => format!("unexpected: {}", message),
             TypeError(expr, kind) => format!("{:?} is not an {}", expr, kind),
+            UndefinedVariable(variable) => format!("{:?} is not yet in the context", variable),
+            CheckerError::SqlEngineError(x) => format!("{:?}", x),
         }),
     }
 }
@@ -109,6 +120,7 @@ fn private_model_checker(mets: Mets) -> Res<Report> {
 
         for (idx, code) in mets.processes.iter().enumerate() {
             if state.pc[idx] < code.len() {
+                interpreter.idx = idx;
                 interpreter.statement(&code[state.pc[idx]])?;
                 let mut new_state = interpreter.reset();
                 new_state.pc[idx] += 1;
@@ -124,6 +136,7 @@ fn private_model_checker(mets: Mets) -> Res<Report> {
 fn init_state(mets: &Mets) -> Res<State> {
     let init_state = State {
         pc: mets.processes.iter().map(|_| 0).collect(),
+        txs: mets.processes.iter().map(|_| None).collect(),
         sql: SqlDatabase::new(),
         locals: HashMap::new(),
         log: vec![],
@@ -141,6 +154,7 @@ enum SqlContext {
 }
 
 struct Interpreter {
+    idx: usize,
     state: State,
     next_state: State,
     sql_context: Option<SqlContext>,
@@ -149,6 +163,7 @@ struct Interpreter {
 impl Interpreter {
     fn new(state: &State) -> Self {
         Interpreter {
+            idx: 0,
             state: state.clone(),
             next_state: state.clone(),
             sql_context: None,
@@ -171,9 +186,12 @@ impl Interpreter {
 
     fn statement(&mut self, statement: &Statement) -> Unit {
         match statement {
-            Statement::Begin(_) => {}
-            Statement::Commit => {}
-            Statement::Abort => {}
+            Statement::Begin(isolation) => {
+                self.next_state.txs[self.idx] =
+                    Some(self.next_state.sql.open_transaction(*isolation));
+            }
+            Statement::Commit => self.next_state.txs[self.idx] = None,
+            Statement::Abort => self.next_state.txs[self.idx] = None,
             Statement::Expression(expr) => {
                 self.interpret(expr)?;
             }
@@ -194,7 +212,7 @@ impl Interpreter {
                 relation,
                 update,
                 condition,
-            } => self.interpret_update(&relation, update, condition),
+            } => self.interpret_update(relation, update, condition),
             Expression::Insert {
                 relation,
                 columns,
@@ -202,7 +220,8 @@ impl Interpreter {
             } => self.interpret_insert(relation, columns, exprs),
             Expression::Assignment(variable, expr) => {
                 let value = self.interpret(expr)?;
-                self.assign(variable.name.clone(), value);
+                let name = variable.name.clone();
+                self.next_state.locals.insert(name, value);
                 Ok(Value::Nil)
             }
             Expression::Binary {
@@ -210,7 +229,12 @@ impl Interpreter {
                 operator,
                 right,
             } => self.interpret_binary(left, operator, right),
-            Expression::Var(variable) => Ok(self.get(&variable.name)),
+            Expression::Var(variable) => self
+                .state
+                .locals
+                .get(&variable.name)
+                .cloned()
+                .ok_or(UndefinedVariable(variable.clone())),
             Expression::Integer(i) => Ok(Value::Integer(*i)),
             Expression::Set(members) => {
                 let mut res = vec![];
@@ -242,62 +266,31 @@ impl Interpreter {
             values.push(self.assert_tuple(expr)?)
         }
 
-        let table = self
-            .next_state
-            .sql
-            .tables
-            .entry(relation.name.clone())
-            .or_default();
-
-        for value in values {
-            let mut new_row = HashMap::new();
-            for (i, col) in columns.iter().enumerate() {
-                new_row.insert(col.name.clone(), value[i].clone());
-            }
-            table.push(Row(new_row))
-        }
+        self.next_state.sql.insert_in_table(
+            &self.state.txs[self.idx],
+            &relation.name,
+            values,
+            columns,
+        );
 
         Ok(Value::Nil)
     }
 
     fn interpret_update(
         &mut self,
-        relation: &&Variable,
+        relation: &Variable,
         update: &Expression,
         condition: &Option<Box<Expression>>,
     ) -> Res<Value> {
         assert!(self.sql_context.is_none());
-        let default_rows = vec![];
-        let rows = self
-            .state
-            .sql
-            .tables
-            .get(&relation.name)
-            .unwrap_or(&default_rows)
-            .clone();
 
-        for row in &rows {
-            if let Some(cond) = condition {
-                self.sql_context = Some(SqlContext::Where {
-                    row: row.clone(),
-                    table: relation.name.clone(),
-                });
-                if self.interpret(cond)? == Value::Bool(true) {
-                    self.sql_context = Some(SqlContext::Update {
-                        row: row.clone(),
-                        table: relation.name.clone(),
-                    });
-                    self.interpret(update)?;
-                }
-            } else {
-                self.sql_context = Some(SqlContext::Update {
-                    row: row.clone(),
-                    table: relation.name.clone(),
-                });
-                self.interpret(update)?;
-            }
-            self.sql_context = None;
-        }
+        self.next_state.sql.update_in_table(
+            &self.state.txs[self.idx],
+            &relation.name,
+            update,
+            condition,
+        )?;
+
         Ok(Value::Nil)
     }
 
@@ -336,10 +329,10 @@ impl Interpreter {
 
         if res.len() == 1 {
             let row = if let Value::Tuple(x) = &res[0] {
-                Ok(x)
+                x
             } else {
                 panic!("expected to be a tuple")
-            }?;
+            };
             if row.len() == 1 {
                 return Ok(row[0].clone());
             }
@@ -420,58 +413,14 @@ impl Interpreter {
             }
             Operator::Included => {
                 let left = self.interpret(left)?;
-                let right = if let Value::Set(right) = self.interpret(right)? {
-                    right
-                } else {
-                    todo!()
-                };
+                let right = self.assert_set(right)?;
                 Ok(Value::Bool(right.contains(&left)))
             }
             Operator::And => {
-                let left = if let Value::Bool(left) = self.interpret(left)? {
-                    left
-                } else {
-                    todo!()
-                };
-                let right = if let Value::Bool(right) = self.interpret(right)? {
-                    right
-                } else {
-                    todo!()
-                };
+                let left = self.assert_bool(left)?;
+                let right = self.assert_bool(right)?;
                 Ok(Value::Bool(left && right))
             }
         }
-    }
-
-    fn assign(&mut self, name: String, value: Value) {
-        if let Some(sql_context) = &self.sql_context {
-            match sql_context {
-                SqlContext::Where { .. } => {
-                    self.next_state.locals.insert(name, value);
-                }
-                SqlContext::Update { table, row } => {
-                    let rows = self.next_state.sql.tables.get_mut(table).unwrap();
-                    for r in rows {
-                        if r == row {
-                            r.0.insert(name.clone(), value.clone());
-                        }
-                    }
-                }
-            }
-        } else {
-            self.next_state.locals.insert(name, value);
-        }
-    }
-
-    fn get(&self, name: &String) -> Value {
-        if let Some(sql_context) = &self.sql_context {
-            match sql_context {
-                SqlContext::Where { row, .. } => row.0.get(name).unwrap(),
-                SqlContext::Update { .. } => self.state.locals.get(name).unwrap(),
-            }
-        } else {
-            self.state.locals.get(name).unwrap()
-        }
-        .clone()
     }
 }

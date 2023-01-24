@@ -1,16 +1,18 @@
 #![allow(dead_code)]
 
+extern crate core;
+
 use crate::engine::model_checker;
 use crate::parser::Parser;
+use crate::reporter::summary;
 use std::env;
 use std::fs::read_to_string;
-use crate::reporter::summary;
 
 mod engine;
 mod parser;
+mod reporter;
 mod scanner;
 mod sql_engine;
-mod reporter;
 
 fn main() {
     let args: Vec<String> = env::args().collect();

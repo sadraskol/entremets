@@ -1,5 +1,7 @@
-use std::collections::HashMap;
 use crate::engine::Value;
+use crate::parser::{Expression, IsolationLevel, Operator, Variable};
+use crate::sql_engine::SqlEngineError::SqlTypeError;
+use std::collections::HashMap;
 
 #[derive(Hash, Eq, PartialEq, Debug, Clone)]
 pub struct HashableRow {
@@ -34,8 +36,39 @@ impl Row {
 }
 
 #[derive(PartialEq, Debug, Clone)]
+enum Changes {
+    Insert(String, Vec<Row>),
+    Update(String, Row, String, Value),
+}
+
+#[derive(PartialEq, Debug, Clone)]
+struct Transaction(Vec<Changes>);
+
+impl Transaction {
+    fn new() -> Self {
+        Transaction(vec![])
+    }
+}
+
+#[derive(PartialEq, Debug, Clone)]
+enum SqlContext {
+    Where {
+        table: String,
+        row: Row,
+    },
+    Update {
+        tx: Option<TransactionId>,
+        table: String,
+        row: Row,
+    },
+}
+
+#[derive(PartialEq, Debug, Clone)]
 pub struct SqlDatabase {
-    pub(crate) tables: HashMap<String, Vec<Row>>,
+    pub tables: HashMap<String, Vec<Row>>,
+    transactions: HashMap<usize, Transaction>,
+    tx: usize,
+    sql_context: Option<SqlContext>,
 }
 
 impl SqlDatabase {
@@ -51,10 +84,297 @@ impl SqlDatabase {
     }
 }
 
+#[derive(PartialEq, Debug, Clone, Copy)]
+pub struct TransactionId(pub usize);
+
+#[derive(PartialEq, Debug, Clone)]
+pub enum SqlEngineError {
+    SqlTypeError(Expression, String),
+}
+
+type Res<T> = Result<T, SqlEngineError>;
+type Unit = Res<()>;
+
 impl SqlDatabase {
     pub fn new() -> SqlDatabase {
         SqlDatabase {
             tables: Default::default(),
+            transactions: Default::default(),
+            tx: 0,
+            sql_context: None,
+        }
+    }
+
+    pub fn open_transaction(&mut self, _isolation: IsolationLevel) -> TransactionId {
+        self.tx += 1;
+        self.transactions.insert(self.tx, Transaction::new());
+
+        TransactionId(self.tx)
+    }
+
+    fn interpret(&mut self, expression: &Expression) -> Res<Value> {
+        match expression {
+            Expression::Assignment(variable, expr) => {
+                let value = self.interpret(expr)?;
+                self.assign(variable.name.clone(), value);
+                Ok(Value::Nil)
+            }
+            Expression::Binary {
+                left,
+                operator,
+                right,
+            } => self.interpret_binary(left, operator, right),
+            Expression::Var(variable) => {
+                if let Some(sql_context) = &self.sql_context {
+                    match sql_context {
+                        SqlContext::Where { row, .. } => {
+                            Ok(row.0.get(&variable.name).unwrap().clone())
+                        }
+                        _ => panic!(),
+                    }
+                } else {
+                    panic!()
+                }
+            }
+            Expression::Integer(i) => Ok(Value::Integer(*i)),
+            Expression::Set(members) => {
+                let mut res = vec![];
+                for member in members {
+                    res.push(self.interpret(member)?)
+                }
+                Ok(Value::Set(res))
+            }
+            Expression::Tuple(members) => {
+                let mut res = vec![];
+                for member in members {
+                    res.push(self.interpret(member)?)
+                }
+                Ok(Value::Tuple(res))
+            }
+            _ => panic!("Non supported expression within an sql expression"),
+        }
+    }
+
+    fn interpret_binary(
+        &mut self,
+        left: &Expression,
+        operator: &Operator,
+        right: &Expression,
+    ) -> Res<Value> {
+        match operator {
+            Operator::Add => {
+                let left = self.assert_integer(left)?;
+                let right = self.assert_integer(right)?;
+                Ok(Value::Integer(left + right))
+            }
+            Operator::Multiply => {
+                let left = self.assert_integer(left)?;
+                let right = self.assert_integer(right)?;
+                Ok(Value::Integer(left * right))
+            }
+            Operator::Rem => {
+                let left = self.assert_integer(left)?;
+                let right = self.assert_integer(right)?;
+                Ok(Value::Integer(left % right))
+            }
+            Operator::Equal => {
+                let left = self.interpret(left)?;
+                let right = self.interpret(right)?;
+
+                Ok(Value::Bool(left == right))
+            }
+            Operator::LessEqual => {
+                let left = self.assert_integer(left)?;
+                let right = self.assert_integer(right)?;
+                Ok(Value::Bool(left <= right))
+            }
+            Operator::Less => {
+                let left = self.assert_integer(left)?;
+                let right = self.assert_integer(right)?;
+                Ok(Value::Bool(left < right))
+            }
+            Operator::Included => {
+                let left = self.interpret(left)?;
+                let right = if let Value::Set(right) = self.interpret(right)? {
+                    right
+                } else {
+                    todo!()
+                };
+                Ok(Value::Bool(right.contains(&left)))
+            }
+            Operator::And => {
+                let left = if let Value::Bool(left) = self.interpret(left)? {
+                    left
+                } else {
+                    todo!()
+                };
+                let right = if let Value::Bool(right) = self.interpret(right)? {
+                    right
+                } else {
+                    todo!()
+                };
+                Ok(Value::Bool(left && right))
+            }
+        }
+    }
+
+    fn assert_integer(&mut self, expr: &Expression) -> Res<i16> {
+        if let Value::Integer(value) = self.interpret(expr)? {
+            Ok(value)
+        } else {
+            Err(SqlTypeError(expr.clone(), "integer".to_string()))
+        }
+    }
+
+    fn assert_set(&mut self, expr: &Expression) -> Res<Vec<Value>> {
+        if let Value::Set(value) = self.interpret(expr)? {
+            Ok(value)
+        } else {
+            Err(SqlTypeError(expr.clone(), "set".to_string()))
+        }
+    }
+
+    fn assert_bool(&mut self, expr: &Expression) -> Res<bool> {
+        if let Value::Bool(value) = self.interpret(expr)? {
+            Ok(value)
+        } else {
+            Err(SqlTypeError(expr.clone(), "bool".to_string()))
+        }
+    }
+
+    fn assert_tuple(&mut self, expr: &Expression) -> Res<Vec<Value>> {
+        if let Value::Tuple(value) = self.interpret(expr)? {
+            Ok(value)
+        } else {
+            Err(SqlTypeError(expr.clone(), "tuple".to_string()))
+        }
+    }
+
+    pub fn insert_in_table(
+        &mut self,
+        tx: &Option<TransactionId>,
+        table: &str,
+        tuples: Vec<Vec<Value>>,
+        columns: &[Variable],
+    ) {
+        let mut rows = vec![];
+        for tuple in tuples {
+            let mut new_row = HashMap::new();
+            for (i, col) in columns.iter().enumerate() {
+                new_row.insert(col.name.clone(), tuple[i].clone());
+            }
+            rows.push(Row(new_row))
+        }
+
+        if let Some(tx) = tx {
+            let transaction = self.transactions.get_mut(&tx.0).unwrap();
+            transaction.0.push(Changes::Insert(table.to_string(), rows));
+        } else {
+            let table = self.tables.entry(table.to_string()).or_default();
+            for row in rows {
+                table.push(row);
+            }
+        }
+    }
+
+    pub fn update_in_table(
+        &mut self,
+        tx: &Option<TransactionId>,
+        table: &String,
+        update: &Expression,
+        condition: &Option<Box<Expression>>,
+    ) -> Unit {
+        let rows = self.rows(tx, table);
+
+        for row in rows {
+            if let Some(cond) = condition {
+                self.sql_context = Some(SqlContext::Where {
+                    row: row.clone(),
+                    table: table.clone(),
+                });
+                if self.interpret(cond)? == Value::Bool(true) {
+                    self.sql_context = Some(SqlContext::Update {
+                        tx: *tx,
+                        row: row.clone(),
+                        table: table.clone(),
+                    });
+                    self.interpret(update)?;
+                }
+            } else {
+                self.sql_context = Some(SqlContext::Update {
+                    tx: *tx,
+                    row: row.clone(),
+                    table: table.clone(),
+                });
+                self.interpret(update)?;
+            }
+            self.sql_context = None;
+        }
+        Ok(())
+    }
+
+    fn rows(&mut self, tx: &Option<TransactionId>, table: &String) -> Vec<Row> {
+        let mut rows = self.tables.get(table).cloned().unwrap_or_default();
+
+        if let Some(tx) = tx {
+            let transaction = self.transactions.get(&tx.0).unwrap();
+            for changes in &transaction.0 {
+                match changes {
+                    Changes::Insert(insert_table, insert_rows) => {
+                        if insert_table == table {
+                            rows.extend_from_slice(insert_rows);
+                        }
+                    }
+                    Changes::Update(_, _, _, _) => {}
+                }
+            }
+        }
+        rows
+    }
+
+    pub fn commit(&mut self, tx: &TransactionId) {
+        let x = self.transactions.remove(&tx.0).unwrap();
+        for change in x.0 {
+            match change {
+                Changes::Insert(table, rows) => {
+                    let table = self.tables.entry(table.clone()).or_default();
+                    table.extend_from_slice(&rows);
+                }
+                Changes::Update(table, row, col, value) => {
+                    let table = self.tables.entry(table.clone()).or_default();
+                    for r in table {
+                        if r == &row {
+                            r.0.insert(col.clone(), value.clone());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn assign(&mut self, name: String, value: Value) {
+        if let Some(sql_context) = &self.sql_context {
+            match sql_context {
+                SqlContext::Update { tx, table, row } => {
+                    if let Some(tx) = tx {
+                        let transaction = self.transactions.get_mut(&tx.0).unwrap();
+                        transaction.0.push(Changes::Update(
+                            table.clone(),
+                            row.clone(),
+                            name,
+                            value,
+                        ));
+                    } else {
+                        let table = self.tables.entry(table.clone()).or_default();
+                        for r in table {
+                            if r == row {
+                                r.0.insert(name.clone(), value.clone());
+                            }
+                        }
+                    }
+                }
+                _ => panic!(),
+            }
         }
     }
 }
