@@ -1,11 +1,12 @@
 use crate::engine::Report;
+use crate::parser::{format_statement, Mets};
 use crate::sql_engine::SqlDatabase;
 
-pub fn summary(report: &Report) -> String {
+pub fn summary(mets: &Mets, report: &Report) -> String {
     let mut base = if let Some(violation) = &report.violation {
         let mut x = format!(
-            "Following property was violated: {:?}\n",
-            violation.property
+            "Following property was violated: {}\n",
+            format_statement(&violation.property)
         );
         x.push_str("The following counter example was found:\n");
 
@@ -19,7 +20,11 @@ pub fn summary(report: &Report) -> String {
                 .enumerate()
                 .find(|(_i, (a, b))| a != b)
                 .expect("no pc changed in between states");
-            x.push_str(&format!("Process {}: **stmt**\n", index));
+            x.push_str(&format!(
+                "Process {}: {}\n",
+                index,
+                format_statement(&mets.processes[index][trace.pc[index] - 1])
+            ));
             x.push_str(&format!("Local State {:?}:\n", trace.locals));
             x.push_str("Global State:\n");
             x.push_str(&sql_summary(&trace.sql));

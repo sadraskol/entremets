@@ -5,8 +5,6 @@ end
 process do
     begin read_committed
     update users set age := 101 where id = 1
-latch
-    commit
 end
 
 process do

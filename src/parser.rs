@@ -41,7 +41,6 @@ pub enum IsolationLevel {
 #[derive(PartialEq, Debug, Clone)]
 pub struct Variable {
     pub name: String,
-    token: Token,
 }
 
 #[derive(PartialEq, Debug, Clone)]
@@ -79,6 +78,7 @@ pub enum Operator {
     Multiply,
     Rem,
     Equal,
+    Is,
     LessEqual,
     Less,
     Included,
@@ -359,7 +359,7 @@ impl Parser {
     }
 
     fn assignment(&mut self) -> Res<Expression> {
-        let mut expr = self.and()?;
+        let mut expr = self.included()?;
 
         if self.matches(TokenKind::ColonEqual)? {
             let name = if let Expression::Var(name) = expr {
@@ -372,6 +372,36 @@ impl Parser {
             };
             let value = self.assignment()?;
             expr = Expression::Assignment(name, Box::new(value));
+        }
+
+        Ok(expr)
+    }
+
+    fn included(&mut self) -> Res<Expression> {
+        let mut expr = self.is()?;
+
+        while self.matches(TokenKind::In)? {
+            let right = self.is()?;
+            expr = Expression::Binary {
+                left: Box::new(expr),
+                operator: Operator::Included,
+                right: Box::new(right),
+            }
+        }
+
+        Ok(expr)
+    }
+
+    fn is(&mut self) -> Res<Expression> {
+        let mut expr = self.and()?;
+
+        while self.matches(TokenKind::Is)? {
+            let right = self.and()?;
+            expr = Expression::Binary {
+                left: Box::new(expr),
+                operator: Operator::Is,
+                right: Box::new(right),
+            }
         }
 
         Ok(expr)
@@ -461,43 +491,13 @@ impl Parser {
     }
 
     fn remainder(&mut self) -> Res<Expression> {
-        let mut expr = self.included()?;
-
-        while self.matches(TokenKind::Percent)? {
-            let right = self.included()?;
-            expr = Expression::Binary {
-                left: Box::new(expr),
-                operator: Operator::Rem,
-                right: Box::new(right),
-            }
-        }
-
-        Ok(expr)
-    }
-
-    fn included(&mut self) -> Res<Expression> {
-        let mut expr = self.is()?;
-
-        while self.matches(TokenKind::In)? {
-            let right = self.is()?;
-            expr = Expression::Binary {
-                left: Box::new(expr),
-                operator: Operator::Included,
-                right: Box::new(right),
-            }
-        }
-
-        Ok(expr)
-    }
-
-    fn is(&mut self) -> Res<Expression> {
         let mut expr = self.primary()?;
 
-        while self.matches(TokenKind::Is)? {
+        while self.matches(TokenKind::Percent)? {
             let right = self.primary()?;
             expr = Expression::Binary {
                 left: Box::new(expr),
-                operator: Operator::Equal,
+                operator: Operator::Rem,
                 right: Box::new(right),
             }
         }
@@ -590,7 +590,7 @@ impl Parser {
 
         let mut condition = None;
         if self.matches(TokenKind::Where)? {
-            let expr = self.expression()?;
+            let expr = self.and()?;
             condition = Some(Box::new(expr));
         }
 
@@ -598,13 +598,6 @@ impl Parser {
             columns,
             from,
             condition,
-        })
-    }
-
-    fn make_variable(&mut self) -> Res<Variable> {
-        Ok(Variable {
-            name: self.previous.lexeme.clone(),
-            token: self.previous.clone(),
         })
     }
 
@@ -673,11 +666,216 @@ impl Parser {
         })
     }
 
+    fn make_variable(&mut self) -> Res<Variable> {
+        Ok(Variable {
+            name: self.previous.lexeme.clone(),
+        })
+    }
+
     fn skip_newlines(&mut self) -> Unit {
         while self.current.kind == TokenKind::Newline {
             self.advance()?;
         }
 
         Ok(())
+    }
+}
+
+fn formatting(expr: &Expression) -> String {
+    match expr {
+        Expression::Select {
+            columns,
+            from,
+            condition,
+        } => {
+            let mut res = "select ".to_string();
+
+            let mut iter = columns.iter().peekable();
+            while let Some(col) = iter.next() {
+                res.push_str(&col.name);
+                if iter.peek().is_some() {
+                    res.push_str(", ");
+                }
+            }
+
+            res.push_str(&format!(" from {}", from.name));
+
+            if let Some(cond) = condition {
+                res.push_str(&format!(" where {}", formatting(cond)))
+            }
+
+            res
+        }
+        Update {
+            relation,
+            update,
+            condition,
+        } => {
+            let mut res = format!("update {} set {}", relation.name, formatting(update));
+
+            if let Some(cond) = condition {
+                res.push_str(&format!(" where {}", formatting(cond)))
+            }
+
+            res
+        }
+        Insert {
+            relation,
+            columns,
+            values,
+        } => {
+            let mut res = format!("insert {} (", relation.name);
+
+            let mut iter = columns.iter().peekable();
+            while let Some(col) = iter.next() {
+                res.push_str(&col.name);
+                if iter.peek().is_some() {
+                    res.push_str(", ");
+                }
+            }
+
+            res.push_str(") values ");
+
+            let mut iter = values.iter().peekable();
+            while let Some(value) = iter.next() {
+                res.push_str(&formatting(value));
+                if iter.peek().is_some() {
+                    res.push_str(", ");
+                }
+            }
+
+            res
+        }
+        Expression::Binary {
+            left,
+            operator,
+            right,
+        } => {
+            let op = match operator {
+                Operator::Add => "+",
+                Operator::Multiply => "*",
+                Operator::Rem => "%",
+                Operator::Equal => "=",
+                Operator::Is => "is",
+                Operator::LessEqual => "<=",
+                Operator::Less => "<",
+                Operator::Included => "in",
+                Operator::And => "and",
+            };
+            format!("{} {} {}", formatting(left), op, formatting(right))
+        }
+        Expression::Assignment(var, value) => {
+            format!("{} := {}", var.name, formatting(value))
+        }
+        Expression::Var(var) => var.name.to_string(),
+        Expression::Integer(i) => i.to_string(),
+        Expression::Set(values) => {
+            let mut res = "{".to_string();
+
+            let mut iter = values.iter().peekable();
+            while let Some(value) = iter.next() {
+                res.push_str(&formatting(value));
+                if iter.peek().is_some() {
+                    res.push_str(", ");
+                }
+            }
+
+            res.push('}');
+
+            res
+        }
+        Expression::Tuple(values) => {
+            let mut res = "(".to_string();
+
+            let mut iter = values.iter().peekable();
+            while let Some(value) = iter.next() {
+                res.push_str(&formatting(value));
+                if iter.peek().is_some() {
+                    res.push_str(", ");
+                }
+            }
+
+            res.push(')');
+
+            res
+        }
+    }
+}
+
+pub fn format_statement(stmt: &Statement) -> String {
+    match stmt {
+        Statement::Begin(level) => format!("begin {:?}", level),
+        Statement::Commit => "commit".to_string(),
+        Statement::Abort => "abort".to_string(),
+        Statement::Expression(expr) => formatting(expr),
+        Statement::Latch => "latch".to_string(),
+        Statement::Always(expr) => format!("always[{}]", formatting(expr)),
+        Statement::Never(expr) => format!("never[{}]", formatting(expr)),
+        Statement::Eventually(expr) => format!("eventually<{}>", formatting(expr)),
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::parser::{Expression, Operator, Parser, Statement, Variable};
+
+    #[test]
+    fn parse_select_is_value() {
+        let mut parser =
+            Parser::new("eventually<select age from users where id = 1 is 11>\n".to_string());
+        parser.advance().unwrap();
+
+        assert_eq!(
+            Statement::Eventually(Expression::Binary {
+                left: Box::new(Expression::Select {
+                    columns: vec![Variable {
+                        name: "age".to_string()
+                    }],
+                    from: Variable {
+                        name: "users".to_string()
+                    },
+                    condition: Some(Box::new(Expression::Binary {
+                        left: Box::new(Expression::Var(Variable {
+                            name: "id".to_string()
+                        })),
+                        operator: Operator::Equal,
+                        right: Box::new(Expression::Integer(1)),
+                    })),
+                }),
+                operator: Operator::Is,
+                right: Box::new(Expression::Integer(11)),
+            }),
+            parser.statement().unwrap()
+        );
+    }
+
+    #[test]
+    fn parse_select_in_value() {
+        let mut parser =
+            Parser::new("eventually<select age from users where id = 1 in {11}>\n".to_string());
+        parser.advance().unwrap();
+
+        assert_eq!(
+            Statement::Eventually(Expression::Binary {
+                left: Box::new(Expression::Select {
+                    columns: vec![Variable {
+                        name: "age".to_string()
+                    }],
+                    from: Variable {
+                        name: "users".to_string()
+                    },
+                    condition: Some(Box::new(Expression::Binary {
+                        left: Box::new(Expression::Var(Variable {
+                            name: "id".to_string()
+                        })),
+                        operator: Operator::Equal,
+                        right: Box::new(Expression::Integer(1)),
+                    })),
+                }),
+                operator: Operator::Included,
+                right: Box::new(Expression::Set(vec![Expression::Integer(11)])),
+            }),
+            parser.statement().unwrap()
+        );
     }
 }

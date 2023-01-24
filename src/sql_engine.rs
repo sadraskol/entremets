@@ -180,7 +180,11 @@ impl SqlDatabase {
             Operator::Equal => {
                 let left = self.interpret(left)?;
                 let right = self.interpret(right)?;
-
+                Ok(Value::Bool(left == right))
+            }
+            Operator::Is => {
+                let left = self.interpret(left)?;
+                let right = self.interpret(right)?;
                 Ok(Value::Bool(left == right))
             }
             Operator::LessEqual => {
@@ -313,7 +317,36 @@ impl SqlDatabase {
         Ok(())
     }
 
-    fn rows(&mut self, tx: &Option<TransactionId>, table: &String) -> Vec<Row> {
+    pub fn select_in_table(
+        &mut self,
+        tx: &Option<TransactionId>,
+        columns: &[Variable],
+        from: &String,
+        condition: &Option<Box<Expression>>,
+    ) -> Res<Vec<Value>> {
+        let columns: Vec<_> = columns.iter().map(|v| v.name.clone()).collect();
+        let rows = self.rows(tx, from);
+
+        let mut res = vec![];
+        for row in &rows {
+            if let Some(cond) = condition {
+                self.sql_context = Some(SqlContext::Where {
+                    row: row.clone(),
+                    table: from.clone(),
+                });
+                if self.interpret(cond)? == Value::Bool(true) {
+                    res.push(row.to_value(&columns))
+                }
+                self.sql_context = None;
+            } else {
+                res.push(row.to_value(&columns))
+            }
+        }
+
+        Ok(res)
+    }
+
+    fn rows(&self, tx: &Option<TransactionId>, table: &String) -> Vec<Row> {
         let mut rows = self.tables.get(table).cloned().unwrap_or_default();
 
         if let Some(tx) = tx {

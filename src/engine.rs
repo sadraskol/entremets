@@ -87,7 +87,7 @@ impl From<SqlEngineError> for CheckerError {
 type Res<T> = Result<T, CheckerError>;
 type Unit = Res<()>;
 
-pub fn model_checker(mets: Mets) -> Result<Report, String> {
+pub fn model_checker(mets: &Mets) -> Result<Report, String> {
     match private_model_checker(mets) {
         Ok(res) => Ok(res),
         Err(err) => Err(match err {
@@ -104,8 +104,8 @@ enum PropertyCheck {
     Eventually(bool),
 }
 
-fn private_model_checker(mets: Mets) -> Res<Report> {
-    let init_state = init_state(&mets)?;
+fn private_model_checker(mets: &Mets) -> Res<Report> {
+    let init_state = init_state(mets)?;
 
     let mut deq = VecDeque::from([init_state]);
     let mut visited = HashSet::new();
@@ -146,8 +146,8 @@ fn private_model_checker(mets: Mets) -> Res<Report> {
 
         states_explored += 1;
 
+        let mut is_final = true;
         for (idx, code) in mets.processes.iter().enumerate() {
-            let mut is_final = true;
             if state.pc[idx] < code.len() {
                 interpreter.idx = idx;
                 interpreter.statement(&code[state.pc[idx]])?;
@@ -157,19 +157,19 @@ fn private_model_checker(mets: Mets) -> Res<Report> {
                 deq.push_back(new_state);
                 is_final = false;
             }
+        }
 
-            if is_final {
-                if let Some((id, _)) = state.eventually.iter().find(|(_, b)| !**b) {
-                    let mut log = state.log.clone();
-                    log.push(state.trace());
-                    return Ok(Report {
-                        states_explored,
-                        violation: Some(Violation {
-                            property: mets.properties[*id].clone(),
-                            log,
-                        }),
-                    });
-                }
+        if is_final {
+            if let Some((id, _)) = state.eventually.iter().find(|(_, b)| !**b) {
+                let mut log = state.log.clone();
+                log.push(state.trace());
+                return Ok(Report {
+                    states_explored,
+                    violation: Some(Violation {
+                        property: mets.properties[*id].clone(),
+                        log,
+                    }),
+                });
             }
         }
     }
@@ -205,7 +205,6 @@ struct Interpreter {
     idx: usize,
     state: State,
     next_state: State,
-    sql_context: Option<SqlContext>,
 }
 
 impl Interpreter {
@@ -214,7 +213,6 @@ impl Interpreter {
             idx: 0,
             state: state.clone(),
             next_state: state.clone(),
-            sql_context: None,
         }
     }
 
@@ -295,12 +293,12 @@ impl Interpreter {
                 operator,
                 right,
             } => self.interpret_binary(left, operator, right),
-            Expression::Var(variable) => self
+            Expression::Var(variable) => Ok(self
                 .state
                 .locals
                 .get(&variable.name)
                 .cloned()
-                .ok_or(UndefinedVariable(variable.clone())),
+                .unwrap_or(Value::Nil)),
             Expression::Integer(i) => Ok(Value::Integer(*i)),
             Expression::Set(members) => {
                 let mut res = vec![];
@@ -325,8 +323,6 @@ impl Interpreter {
         columns: &[Variable],
         exprs: &[Expression],
     ) -> Res<Value> {
-        assert!(self.sql_context.is_none());
-
         let mut values = vec![];
         for expr in exprs {
             values.push(self.assert_tuple(expr)?)
@@ -348,8 +344,6 @@ impl Interpreter {
         update: &Expression,
         condition: &Option<Box<Expression>>,
     ) -> Res<Value> {
-        assert!(self.sql_context.is_none());
-
         self.next_state.sql.update_in_table(
             &self.state.txs[self.idx],
             &relation.name,
@@ -366,32 +360,12 @@ impl Interpreter {
         from: &Variable,
         condition: &Option<Box<Expression>>,
     ) -> Res<Value> {
-        assert!(self.sql_context.is_none());
-        let columns: Vec<_> = columns.iter().map(|v| v.name.clone()).collect();
-        let default_rows = vec![];
-        let rows = self
-            .state
-            .sql
-            .tables
-            .get(&from.name)
-            .unwrap_or(&default_rows)
-            .clone();
-
-        let mut res = vec![];
-        for row in &rows {
-            if let Some(cond) = condition {
-                self.sql_context = Some(SqlContext::Where {
-                    row: row.clone(),
-                    table: from.name.clone(),
-                });
-                if self.interpret(cond)? == Value::Bool(true) {
-                    res.push(row.to_value(&columns))
-                }
-                self.sql_context = None;
-            } else {
-                res.push(row.to_value(&columns))
-            }
-        }
+        let res = self.state.sql.select_in_table(
+            &self.state.txs[self.idx],
+            columns,
+            &from.name,
+            condition,
+        )?;
 
         if res.len() == 1 {
             let row = if let Value::Tuple(x) = &res[0] {
@@ -464,7 +438,11 @@ impl Interpreter {
             Operator::Equal => {
                 let left = self.interpret(left)?;
                 let right = self.interpret(right)?;
-
+                Ok(Value::Bool(left == right))
+            }
+            Operator::Is => {
+                let left = self.interpret(left)?;
+                let right = self.interpret(right)?;
                 Ok(Value::Bool(left == right))
             }
             Operator::LessEqual => {
