@@ -17,6 +17,7 @@ struct HashableState {
     pc: Vec<usize>,
     global: Vec<(String, Vec<HashableRow>)>,
     locals: Vec<(String, Value)>,
+    eventually: Vec<(usize, bool)>,
 }
 
 #[derive(PartialEq, Debug, Clone)]
@@ -33,6 +34,7 @@ struct State {
     sql: SqlDatabase,
     locals: HashMap<String, Value>,
     log: Vec<Trace>,
+    eventually: HashMap<usize, bool>,
 }
 
 impl State {
@@ -53,16 +55,19 @@ impl State {
                 .iter()
                 .map(|(l, r)| (l.clone(), r.clone()))
                 .collect(),
+            eventually: self.eventually.iter().map(|(l, r)| (*l, *r)).collect(),
         }
     }
 }
 
 #[derive(PartialEq, Debug, Clone)]
 pub struct Violation {
+    pub property: Statement,
     pub log: Vec<Trace>,
 }
 
 pub struct Report {
+    pub states_explored: usize,
     pub violation: Option<Violation>,
 }
 
@@ -94,13 +99,20 @@ pub fn model_checker(mets: Mets) -> Result<Report, String> {
     }
 }
 
+enum PropertyCheck {
+    Always(bool),
+    Eventually(bool),
+}
+
 fn private_model_checker(mets: Mets) -> Res<Report> {
     let init_state = init_state(&mets)?;
 
     let mut deq = VecDeque::from([init_state]);
     let mut visited = HashSet::new();
 
-    while let Some(state) = deq.pop_front() {
+    let mut states_explored = 0;
+
+    while let Some(mut state) = deq.pop_front() {
         if visited.contains(&state.hashable()) {
             continue;
         }
@@ -108,17 +120,34 @@ fn private_model_checker(mets: Mets) -> Res<Report> {
 
         let mut interpreter = Interpreter::new(&state);
 
-        for property in &mets.properties {
-            if !interpreter.check_property(property)? {
-                let mut log = state.log.clone();
-                log.push(state.trace());
-                return Ok(Report {
-                    violation: Some(Violation { log }),
-                });
+        for (id, property) in mets.properties.iter().enumerate() {
+            let res = interpreter.check_property(property)?;
+            match res {
+                PropertyCheck::Always(false) => {
+                    let mut log = state.log.clone();
+                    log.push(state.trace());
+                    return Ok(Report {
+                        states_explored,
+                        violation: Some(Violation {
+                            property: property.clone(),
+                            log,
+                        }),
+                    });
+                }
+                PropertyCheck::Eventually(res) => {
+                    let existing = state.eventually.entry(id).or_insert(false);
+                    if !*existing && res {
+                        *existing = res;
+                    }
+                }
+                _ => {}
             }
         }
 
+        states_explored += 1;
+
         for (idx, code) in mets.processes.iter().enumerate() {
+            let mut is_final = true;
             if state.pc[idx] < code.len() {
                 interpreter.idx = idx;
                 interpreter.statement(&code[state.pc[idx]])?;
@@ -126,11 +155,29 @@ fn private_model_checker(mets: Mets) -> Res<Report> {
                 new_state.pc[idx] += 1;
                 new_state.log.push(state.trace());
                 deq.push_back(new_state);
+                is_final = false;
+            }
+
+            if is_final {
+                if let Some((id, _)) = state.eventually.iter().find(|(_, b)| !**b) {
+                    let mut log = state.log.clone();
+                    log.push(state.trace());
+                    return Ok(Report {
+                        states_explored,
+                        violation: Some(Violation {
+                            property: mets.properties[*id].clone(),
+                            log,
+                        }),
+                    });
+                }
             }
         }
     }
 
-    Ok(Report { violation: None })
+    Ok(Report {
+        states_explored,
+        violation: None,
+    })
 }
 
 fn init_state(mets: &Mets) -> Res<State> {
@@ -140,6 +187,7 @@ fn init_state(mets: &Mets) -> Res<State> {
         sql: SqlDatabase::new(),
         locals: HashMap::new(),
         log: vec![],
+        eventually: HashMap::new(),
     };
     let mut interpreter = Interpreter::new(&init_state);
     for statement in &mets.init {
@@ -174,11 +222,19 @@ impl Interpreter {
         std::mem::replace(&mut self.next_state, self.state.clone())
     }
 
-    fn check_property(&mut self, property: &Statement) -> Res<bool> {
+    fn check_property(&mut self, property: &Statement) -> Res<PropertyCheck> {
         match property {
             Statement::Always(always) => {
                 let value = self.interpret(always)?;
-                Ok(value == Value::Bool(true))
+                Ok(PropertyCheck::Always(value == Value::Bool(true)))
+            }
+            Statement::Eventually(eventually) => {
+                let value = self.interpret(eventually)?;
+                Ok(PropertyCheck::Eventually(value == Value::Bool(true)))
+            }
+            Statement::Never(never) => {
+                let value = self.interpret(never)?;
+                Ok(PropertyCheck::Always(value == Value::Bool(false)))
             }
             _ => Err(Unexpected(format!("unsupported property: {:?}", property))),
         }
@@ -190,8 +246,18 @@ impl Interpreter {
                 self.next_state.txs[self.idx] =
                     Some(self.next_state.sql.open_transaction(*isolation));
             }
-            Statement::Commit => self.next_state.txs[self.idx] = None,
-            Statement::Abort => self.next_state.txs[self.idx] = None,
+            Statement::Commit => {
+                self.next_state
+                    .sql
+                    .commit(&self.next_state.txs[self.idx].unwrap());
+                self.next_state.txs[self.idx] = None
+            }
+            Statement::Abort => {
+                self.next_state
+                    .sql
+                    .abort(&self.next_state.txs[self.idx].unwrap());
+                self.next_state.txs[self.idx] = None
+            }
             Statement::Expression(expr) => {
                 self.interpret(expr)?;
             }

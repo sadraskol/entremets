@@ -352,6 +352,10 @@ impl SqlDatabase {
         }
     }
 
+    pub fn abort(&mut self, tx: &TransactionId) {
+        self.transactions.remove(&tx.0).unwrap();
+    }
+
     fn assign(&mut self, name: String, value: Value) {
         if let Some(sql_context) = &self.sql_context {
             match sql_context {

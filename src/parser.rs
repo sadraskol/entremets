@@ -1,9 +1,24 @@
 use crate::parser::Expression::{Insert, Update};
 use crate::parser::ParserError::Unexpected;
-use crate::scanner::{Scanner, ScannerError, Token, TokenKind};
+use crate::scanner::{Position, Scanner, ScannerError, Token, TokenKind};
 use std::mem;
 use std::num::ParseIntError;
+use std::ops::Deref;
 use std::str::FromStr;
+
+struct Lexeme<T> {
+    t: T,
+    position: Position,
+    lexeme: String,
+}
+
+impl<T> Deref for Lexeme<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        &self.t
+    }
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Statement {

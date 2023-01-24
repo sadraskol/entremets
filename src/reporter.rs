@@ -2,8 +2,11 @@ use crate::engine::Report;
 use crate::sql_engine::SqlDatabase;
 
 pub fn summary(report: &Report) -> String {
-    if let Some(violation) = &report.violation {
-        let mut x = "Following property was violated:\n".to_string();
+    let mut base = if let Some(violation) = &report.violation {
+        let mut x = format!(
+            "Following property was violated: {:?}\n",
+            violation.property
+        );
         x.push_str("The following counter example was found:\n");
 
         let mut last_trace = &violation.log[0];
@@ -25,7 +28,10 @@ pub fn summary(report: &Report) -> String {
         x
     } else {
         "No counter example found".to_string()
-    }
+    };
+
+    base.push_str(&format!("\nStates explored: {}", report.states_explored));
+    base
 }
 fn sql_summary(global: &SqlDatabase) -> String {
     let mut x = String::new();
