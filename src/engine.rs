@@ -1,9 +1,10 @@
 use crate::engine::CheckerError::{TypeError, Unexpected};
 use crate::parser::{Expression, Mets, Operator, Statement, Variable};
 use std::collections::{HashMap, HashSet, VecDeque};
+use crate::sql_engine::{HashableRow, Row, SqlDatabase};
 
 #[derive(Hash, Eq, PartialEq, Debug, Clone)]
-enum Value {
+pub enum Value {
     Nil,
     Bool(bool),
     Integer(i16),
@@ -19,10 +20,10 @@ struct HashableState {
 }
 
 #[derive(PartialEq, Debug, Clone)]
-struct Trace {
-    pc: Vec<usize>,
-    sql: SqlDatabase,
-    locals: HashMap<String, Value>,
+pub struct Trace {
+    pub pc: Vec<usize>,
+    pub sql: SqlDatabase,
+    pub locals: HashMap<String, Value>,
 }
 
 #[derive(PartialEq, Debug, Clone)]
@@ -56,18 +57,12 @@ impl State {
 }
 
 #[derive(PartialEq, Debug, Clone)]
-struct Violation {
-    log: Vec<Trace>,
-}
-
-#[derive(Hash, Eq, PartialEq, Debug, Clone)]
-struct HashableRow {
-    keys: Vec<String>,
-    values: Vec<Value>,
+pub struct Violation {
+    pub log: Vec<Trace>,
 }
 
 pub struct Report {
-    violation: Option<Violation>,
+    pub violation: Option<Violation>,
 }
 
 pub enum CheckerError {
@@ -479,109 +474,4 @@ impl Interpreter {
         }
         .clone()
     }
-}
-
-pub fn summary(report: &Report) -> String {
-    if let Some(violation) = &report.violation {
-        let mut x = "Following property was violated:\n".to_string();
-        x.push_str("The following counter example was found:\n");
-
-        let mut last_trace = &violation.log[0];
-        x.push_str(&format!("Local State {:?}:\n", last_trace.locals));
-        x.push_str("Global State:\n");
-        x.push_str(&sql_summary(&last_trace.sql));
-
-        for trace in &violation.log[1..] {
-            let (index, _) = (trace.pc.iter().zip(&last_trace.pc))
-                .enumerate()
-                .find(|(_i, (a, b))| a != b)
-                .expect("no pc changed in between states");
-            x.push_str(&format!("Process {}: **stmt**\n", index));
-            x.push_str(&format!("Local State {:?}:\n", trace.locals));
-            x.push_str("Global State:\n");
-            x.push_str(&sql_summary(&trace.sql));
-            last_trace = trace;
-        }
-        x
-    } else {
-        "No counter example found".to_string()
-    }
-}
-
-#[derive(PartialEq, Debug, Clone)]
-struct Row(HashMap<String, Value>);
-
-impl Row {
-    fn to_value(&self, columns: &[String]) -> Value {
-        let mut res = vec![];
-        for col in columns {
-            res.push(self.0.get(col).unwrap().clone())
-        }
-        Value::Tuple(res)
-    }
-
-    pub fn keys(&self) -> Vec<String> {
-        self.0.keys().cloned().collect()
-    }
-
-    pub fn values(&self) -> Vec<Value> {
-        self.0.values().cloned().collect()
-    }
-
-    fn hashable(self) -> HashableRow {
-        let (keys, values): (Vec<String>, Vec<Value>) = self.0.into_iter().unzip();
-        HashableRow { keys, values }
-    }
-}
-
-#[derive(PartialEq, Debug, Clone)]
-struct SqlDatabase {
-    tables: HashMap<String, Vec<Row>>,
-}
-
-impl SqlDatabase {
-    fn hashable(&self) -> Vec<(String, Vec<HashableRow>)> {
-        let mut res = vec![];
-        for (name, rows) in &self.tables {
-            res.push((
-                name.clone(),
-                rows.iter().map(|row| row.clone().hashable()).collect(),
-            ));
-        }
-        res
-    }
-}
-
-impl SqlDatabase {
-    fn new() -> SqlDatabase {
-        SqlDatabase {
-            tables: Default::default(),
-        }
-    }
-}
-
-fn sql_summary(global: &SqlDatabase) -> String {
-    let mut x = String::new();
-    for (table, rows) in global.tables.iter() {
-        if rows.is_empty() {
-            x.push_str(&format!("{}: empty\n", table));
-        } else {
-            x.push_str(&format!("--- {} ---\n", table));
-
-            for key in &rows[0].keys() {
-                x.push_str(&format!("{},", key));
-            }
-            x.remove(x.len() - 1);
-            x.push('\n');
-
-            for row in rows {
-                for value in &row.values() {
-                    x.push_str(&format!("{:?},", value));
-                }
-                x.remove(x.len() - 1);
-                x.push('\n');
-            }
-        }
-    }
-    x
 }
