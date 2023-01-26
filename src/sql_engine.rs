@@ -42,11 +42,28 @@ enum Changes {
 }
 
 #[derive(PartialEq, Debug, Clone)]
-struct Transaction(Vec<Changes>);
+enum LockMode {
+    ForUpdate,
+}
+
+#[derive(PartialEq, Debug, Clone)]
+struct Lock {
+    row: Row,
+    mode: LockMode,
+}
+
+#[derive(PartialEq, Debug, Clone)]
+struct Transaction {
+    changes: Vec<Changes>,
+    locks: Vec<Lock>,
+}
 
 impl Transaction {
     fn new() -> Self {
-        Transaction(vec![])
+        Transaction {
+            changes: vec![],
+            locks: vec![],
+        }
     }
 }
 
@@ -89,6 +106,7 @@ pub struct TransactionId(pub usize);
 
 #[derive(PartialEq, Debug, Clone)]
 pub enum SqlEngineError {
+    RowLockedError,
     SqlTypeError(Expression, String),
 }
 
@@ -116,7 +134,7 @@ impl SqlDatabase {
         match expression {
             Expression::Assignment(variable, expr) => {
                 let value = self.interpret(expr)?;
-                self.assign(variable.name.clone(), value);
+                self.assign(variable.name.clone(), value)?;
                 Ok(Value::Nil)
             }
             Expression::Binary {
@@ -272,7 +290,7 @@ impl SqlDatabase {
 
         if let Some(tx) = tx {
             let transaction = self.transactions.get_mut(&tx.0).unwrap();
-            transaction.0.push(Changes::Insert(table.to_string(), rows));
+            transaction.changes.push(Changes::Insert(table.to_string(), rows));
         } else {
             let table = self.tables.entry(table.to_string()).or_default();
             for row in rows {
@@ -351,7 +369,7 @@ impl SqlDatabase {
 
         if let Some(tx) = tx {
             let transaction = self.transactions.get(&tx.0).unwrap();
-            for changes in &transaction.0 {
+            for changes in &transaction.changes {
                 match changes {
                     Changes::Insert(insert_table, insert_rows) => {
                         if insert_table == table {
@@ -367,7 +385,7 @@ impl SqlDatabase {
 
     pub fn commit(&mut self, tx: &TransactionId) {
         let x = self.transactions.remove(&tx.0).unwrap();
-        for change in x.0 {
+        for change in x.changes {
             match change {
                 Changes::Insert(table, rows) => {
                     let table = self.tables.entry(table.clone()).or_default();
@@ -389,18 +407,26 @@ impl SqlDatabase {
         self.transactions.remove(&tx.0).unwrap();
     }
 
-    fn assign(&mut self, name: String, value: Value) {
+    fn assign(&mut self, name: String, value: Value) -> Unit {
         if let Some(sql_context) = &self.sql_context {
             match sql_context {
                 SqlContext::Update { tx, table, row } => {
                     if let Some(tx) = tx {
-                        let transaction = self.transactions.get_mut(&tx.0).unwrap();
-                        transaction.0.push(Changes::Update(
-                            table.clone(),
-                            row.clone(),
-                            name,
-                            value,
-                        ));
+                        if self.is_locked(tx, row, LockMode::ForUpdate) {
+                            return Err(SqlEngineError::RowLockedError);
+                        } else {
+                            let transaction = self.transactions.get_mut(&tx.0).unwrap();
+                            transaction.locks.push(Lock {
+                                row: row.clone(),
+                                mode: LockMode::ForUpdate,
+                            });
+                            transaction.changes.push(Changes::Update(
+                                table.clone(),
+                                row.clone(),
+                                name,
+                                value,
+                            ));
+                        }
                     } else {
                         let table = self.tables.entry(table.clone()).or_default();
                         for r in table {
@@ -413,5 +439,16 @@ impl SqlDatabase {
                 _ => panic!(),
             }
         }
+
+        Ok(())
+    }
+
+    fn is_locked(&self, tx: &TransactionId, row: &Row, mode: LockMode) -> bool {
+        for (id, t) in &self.transactions {
+            if *id != tx.0 && t.locks.iter().any(|l| l.mode == mode && &l.row == row) {
+                return true;
+            }
+        }
+        false
     }
 }

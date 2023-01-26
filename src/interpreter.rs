@@ -1,4 +1,4 @@
-use crate::engine::{PropertyCheck, State, Value};
+use crate::engine::{PropertyCheck, State, Value, ProcessState};
 use crate::interpreter::InterpreterError::{TypeError, Unexpected};
 use crate::parser::{Expression, Operator, Statement, Variable};
 use crate::sql_engine::SqlEngineError;
@@ -78,7 +78,7 @@ impl Interpreter {
                 self.interpret(expr)?;
             }
             Statement::Latch => {
-                self.next_state.waiting[self.idx] = true;
+                self.next_state.state[self.idx] = ProcessState::Waiting;
             }
             _ => panic!("Unexpected statement in process: {:?}", statement),
         };

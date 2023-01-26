@@ -1,6 +1,6 @@
 use crate::interpreter::{Interpreter, InterpreterError};
 use crate::parser::{Mets, Statement};
-use crate::sql_engine::{HashableRow, SqlDatabase, TransactionId};
+use crate::sql_engine::{HashableRow, SqlDatabase, SqlEngineError, TransactionId};
 use std::collections::{HashMap, HashSet, VecDeque};
 
 #[derive(Hash, Eq, PartialEq, Debug, Clone)]
@@ -10,6 +10,44 @@ pub enum Value {
     Integer(i16),
     Set(Vec<Value>),
     Tuple(Vec<Value>),
+}
+
+impl Value {
+    pub fn to_string(&self) -> String {
+        match self {
+            Value::Nil => "nil".to_string(),
+            Value::Bool(x) => if *x { "true".to_string() } else { "false".to_string() },
+            Value::Integer(i) => i.to_string(),
+            Value::Set(set) => {
+                let mut res = "{".to_string();
+                let mut peekable = set.iter().peekable();
+                while let Some(i) = peekable.next() {
+                    res += &i.to_string();
+                    if peekable.peek().is_some() {
+                        res = res.to_owned() + ", ";
+                    }
+                }
+
+                res += "}";
+
+                res
+            }
+            Value::Tuple(tuple) => {
+                let mut res = "(".to_string();
+                let mut peekable = tuple.iter().peekable();
+                while let Some(i) = peekable.next() {
+                    res += &i.to_string();
+                    if peekable.peek().is_some() {
+                        res = res.to_owned() + ", ";
+                    }
+                }
+
+                res += ")";
+
+                res
+            }
+        }
+    }
 }
 
 #[derive(Hash, Eq, PartialEq, Debug, Clone)]
@@ -28,9 +66,16 @@ pub struct Trace {
 }
 
 #[derive(PartialEq, Debug, Clone)]
+pub enum ProcessState {
+    Running,
+    Waiting,
+    Finished,
+}
+
+#[derive(PartialEq, Debug, Clone)]
 pub struct State {
     pc: Vec<usize>,
-    pub waiting: Vec<bool>,
+    pub state: Vec<ProcessState>,
     pub txs: Vec<Option<TransactionId>>,
     pub sql: SqlDatabase,
     pub locals: HashMap<String, Value>,
@@ -142,20 +187,27 @@ fn private_model_checker(mets: &Mets) -> Res<Report> {
 
         let mut is_final = true;
         for (idx, code) in mets.processes.iter().enumerate() {
-            if state.pc[idx] < code.len() && !state.waiting[idx] {
+            if state.state[idx] == ProcessState::Running {
                 interpreter.idx = idx;
-                interpreter.statement(&code[state.pc[idx]])?;
+                if let Err(InterpreterError::SqlEngineError(SqlEngineError::RowLockedError)) = interpreter.statement(&code[state.pc[idx]]) {
+                    interpreter.reset();
+                    continue
+                }
                 let mut new_state = interpreter.reset();
                 new_state.pc[idx] += 1;
 
+                if new_state.pc[idx] == code.len() {
+                    new_state.state[idx] = ProcessState::Finished
+                }
                 if new_state
-                    .waiting
+                    .state
                     .iter()
-                    .enumerate()
-                    .all(|(i, w)| *w || new_state.pc[i] >= code.len())
+                    .all(|w| w == &ProcessState::Waiting || w == &ProcessState::Finished)
                 {
-                    for w in new_state.waiting.iter_mut() {
-                        *w = false;
+                    for w in new_state.state.iter_mut() {
+                        if w == &ProcessState::Waiting {
+                            *w = ProcessState::Running;
+                        }
                     }
                 }
 
@@ -189,7 +241,7 @@ fn private_model_checker(mets: &Mets) -> Res<Report> {
 fn init_state(mets: &Mets) -> Res<State> {
     let init_state = State {
         pc: mets.processes.iter().map(|_| 0).collect(),
-        waiting: mets.processes.iter().map(|_| false).collect(),
+        state: mets.processes.iter().map(|_| ProcessState::Running).collect(),
         txs: mets.processes.iter().map(|_| None).collect(),
         sql: SqlDatabase::new(),
         locals: HashMap::new(),

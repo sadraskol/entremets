@@ -11,8 +11,9 @@ pub fn summary(mets: &Mets, report: &Report) -> String {
         x.push_str("The following counter example was found:\n");
 
         let mut last_trace = &violation.log[0];
-        x.push_str(&format!("Local State {:?}:\n", last_trace.locals));
-        x.push_str("Global State:\n");
+        if !last_trace.locals.is_empty() {
+            x.push_str(&format!("Local State {:?}\n", last_trace.locals));
+        }
         x.push_str(&sql_summary(&last_trace.sql));
 
         for trace in &violation.log[1..] {
@@ -25,8 +26,9 @@ pub fn summary(mets: &Mets, report: &Report) -> String {
                 index,
                 format_statement(&mets.processes[index][trace.pc[index] - 1])
             ));
-            x.push_str(&format!("Local State {:?}:\n", trace.locals));
-            x.push_str("Global State:\n");
+            if !trace.locals.is_empty() {
+                x.push_str(&format!("Local State {:?}\n", trace.locals));
+            }
             x.push_str(&sql_summary(&trace.sql));
             last_trace = trace;
         }
@@ -38,28 +40,30 @@ pub fn summary(mets: &Mets, report: &Report) -> String {
     base.push_str(&format!("\nStates explored: {}", report.states_explored));
     base
 }
+
 fn sql_summary(global: &SqlDatabase) -> String {
     let mut x = String::new();
     for (table, rows) in global.tables.iter() {
-        if rows.is_empty() {
-            x.push_str(&format!("{}: empty\n", table));
-        } else {
-            x.push_str(&format!("--- {} ---\n", table));
+        x.push_str(&format!("{}: {{", table));
 
-            for key in &rows[0].keys() {
-                x.push_str(&format!("{},", key));
-            }
-            x.remove(x.len() - 1);
-            x.push('\n');
-
-            for row in rows {
-                for value in &row.values() {
-                    x.push_str(&format!("{:?},", value));
+        let mut x1 = rows.iter().peekable();
+        while let Some(row) = x1.next() {
+            x.push_str("(");
+            let values = row.values();
+            let mut enumerate = values.iter().enumerate().peekable();
+            while let Some((i, _)) = enumerate.next() {
+                x.push_str(&format!("{}: {}", row.keys()[i], row.values()[i].to_string()));
+                if enumerate.peek().is_some() {
+                    x.push_str(", ");
                 }
-                x.remove(x.len() - 1);
-                x.push('\n');
+            }
+            x.push_str(")");
+
+            if x1.peek().is_some() {
+                x.push_str(", ");
             }
         }
+        x.push_str("}\n");
     }
     x
 }
