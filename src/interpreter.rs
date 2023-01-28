@@ -134,6 +134,7 @@ impl Interpreter {
                 }
                 Ok(Value::Tuple(res))
             }
+            Expression::Value(_) => panic!(),
         }
     }
 
@@ -164,10 +165,11 @@ impl Interpreter {
         update: &Expression,
         condition: &Option<Box<Expression>>,
     ) -> Res<Value> {
+        let update_sql = self.sql_update_expression(update)?;
         self.next_state.sql.update_in_table(
             &self.state.txs[self.idx],
             &relation.name,
-            update,
+            &update_sql,
             condition,
         )?;
 
@@ -286,5 +288,34 @@ impl Interpreter {
                 Ok(Value::Bool(left && right))
             }
         }
+    }
+
+    fn sql_translate(&mut self, expr: &mut Expression) -> Unit {
+        match expr {
+            Expression::Assignment(_x, y) => {
+                self.sql_translate(y)?;
+            }
+            Expression::Var(variable) => {
+                let y = self
+                    .state
+                    .locals
+                    .get(&variable.name)
+                    .cloned()
+                    .unwrap_or(Value::Nil);
+                *expr = Expression::Value(y);
+            }
+            Expression::Binary {left, right, ..} => {
+                self.sql_translate(left)?;
+                self.sql_translate(right)?;
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn sql_update_expression(&mut self, expr: &Expression) -> Res<Expression> {
+        let mut sql_expr = expr.clone();
+        self.sql_translate(&mut sql_expr)?;
+        Ok(sql_expr.clone())
     }
 }

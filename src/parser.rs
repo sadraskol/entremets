@@ -5,6 +5,7 @@ use std::mem;
 use std::num::ParseIntError;
 use std::ops::Deref;
 use std::str::FromStr;
+use crate::engine::Value;
 
 struct Lexeme<T> {
     t: T,
@@ -70,6 +71,9 @@ pub enum Expression {
     Integer(i16),
     Set(Vec<Expression>),
     Tuple(Vec<Expression>),
+
+    // this enum is only here for convenience for the sql interpreter
+    Value(Value),
 }
 
 #[derive(PartialEq, Debug, Clone)]
@@ -799,6 +803,7 @@ fn formatting(expr: &Expression) -> String {
 
             res
         }
+        Expression::Value(v) => v.to_string()
     }
 }
 

@@ -169,7 +169,12 @@ impl SqlDatabase {
                 }
                 Ok(Value::Tuple(res))
             }
-            _ => panic!("Non supported expression within an sql expression"),
+            Expression::Value(v) => {
+                Ok(v.clone())
+            },
+            Expression::Select { .. } => panic!(),
+            Expression::Update { .. } => panic!(),
+            Expression::Insert { .. } => panic!(),
         }
     }
 
