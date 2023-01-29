@@ -169,9 +169,7 @@ impl SqlDatabase {
                 }
                 Ok(Value::Tuple(res))
             }
-            Expression::Value(v) => {
-                Ok(v.clone())
-            },
+            Expression::Value(v) => Ok(v.clone()),
             Expression::Select { .. } => panic!(),
             Expression::Update { .. } => panic!(),
             Expression::Insert { .. } => panic!(),
@@ -295,7 +293,9 @@ impl SqlDatabase {
 
         if let Some(tx) = tx {
             let transaction = self.transactions.get_mut(&tx.0).unwrap();
-            transaction.changes.push(Changes::Insert(table.to_string(), rows));
+            transaction
+                .changes
+                .push(Changes::Insert(table.to_string(), rows));
         } else {
             let table = self.tables.entry(table.to_string()).or_default();
             for row in rows {

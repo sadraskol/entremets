@@ -16,7 +16,13 @@ impl Value {
     pub fn to_string(&self) -> String {
         match self {
             Value::Nil => "nil".to_string(),
-            Value::Bool(x) => if *x { "true".to_string() } else { "false".to_string() },
+            Value::Bool(x) => {
+                if *x {
+                    "true".to_string()
+                } else {
+                    "false".to_string()
+                }
+            }
             Value::Integer(i) => i.to_string(),
             Value::Set(set) => {
                 let mut res = "{".to_string();
@@ -189,9 +195,11 @@ fn private_model_checker(mets: &Mets) -> Res<Report> {
         for (idx, code) in mets.processes.iter().enumerate() {
             if state.state[idx] == ProcessState::Running {
                 interpreter.idx = idx;
-                if let Err(InterpreterError::SqlEngineError(SqlEngineError::RowLockedError)) = interpreter.statement(&code[state.pc[idx]]) {
+                if let Err(InterpreterError::SqlEngineError(SqlEngineError::RowLockedError)) =
+                    interpreter.statement(&code[state.pc[idx]])
+                {
                     interpreter.reset();
-                    continue
+                    continue;
                 }
                 let mut new_state = interpreter.reset();
                 new_state.pc[idx] += 1;
@@ -241,7 +249,11 @@ fn private_model_checker(mets: &Mets) -> Res<Report> {
 fn init_state(mets: &Mets) -> Res<State> {
     let init_state = State {
         pc: mets.processes.iter().map(|_| 0).collect(),
-        state: mets.processes.iter().map(|_| ProcessState::Running).collect(),
+        state: mets
+            .processes
+            .iter()
+            .map(|_| ProcessState::Running)
+            .collect(),
         txs: mets.processes.iter().map(|_| None).collect(),
         sql: SqlDatabase::new(),
         locals: HashMap::new(),

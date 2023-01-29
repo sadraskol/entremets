@@ -1,3 +1,4 @@
+use crate::engine::Value;
 use crate::parser::Expression::{Insert, Update};
 use crate::parser::ParserError::Unexpected;
 use crate::scanner::{Position, Scanner, ScannerError, Token, TokenKind};
@@ -5,7 +6,6 @@ use std::mem;
 use std::num::ParseIntError;
 use std::ops::Deref;
 use std::str::FromStr;
-use crate::engine::Value;
 
 struct Lexeme<T> {
     t: T,
@@ -803,7 +803,7 @@ fn formatting(expr: &Expression) -> String {
 
             res
         }
-        Expression::Value(v) => v.to_string()
+        Expression::Value(v) => v.to_string(),
     }
 }
 

@@ -1,4 +1,4 @@
-use crate::engine::{PropertyCheck, State, Value, ProcessState};
+use crate::engine::{ProcessState, PropertyCheck, State, Value};
 use crate::interpreter::InterpreterError::{TypeError, Unexpected};
 use crate::parser::{Expression, Operator, Statement, Variable};
 use crate::sql_engine::SqlEngineError;
@@ -304,7 +304,7 @@ impl Interpreter {
                     .unwrap_or(Value::Nil);
                 *expr = Expression::Value(y);
             }
-            Expression::Binary {left, right, ..} => {
+            Expression::Binary { left, right, .. } => {
                 self.sql_translate(left)?;
                 self.sql_translate(right)?;
             }

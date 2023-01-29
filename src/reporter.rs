@@ -48,16 +48,20 @@ fn sql_summary(global: &SqlDatabase) -> String {
 
         let mut x1 = rows.iter().peekable();
         while let Some(row) = x1.next() {
-            x.push_str("(");
+            x.push('(');
             let values = row.values();
             let mut enumerate = values.iter().enumerate().peekable();
             while let Some((i, _)) = enumerate.next() {
-                x.push_str(&format!("{}: {}", row.keys()[i], row.values()[i].to_string()));
+                x.push_str(&format!(
+                    "{}: {}",
+                    row.keys()[i],
+                    row.values()[i].to_string()
+                ));
                 if enumerate.peek().is_some() {
                     x.push_str(", ");
                 }
             }
-            x.push_str(")");
+            x.push(')');
 
             if x1.peek().is_some() {
                 x.push_str(", ");
