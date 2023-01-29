@@ -1,0 +1,21 @@
+init do
+    insert into users (id, age) values (1, 10)
+end
+
+process do
+    begin read_committed
+    let first := select age from users where age = 30
+latch
+latch
+    let second := select age from users where age % 3 = 0
+    commit
+end
+
+process do
+    begin read_committed
+latch
+    insert into users(id, age) values (3, 30)
+    commit
+end
+
+property = eventually<first = {} and second = {}>
