@@ -22,9 +22,9 @@ They can be qualified as the following:
 | Read Uncommitted | Shit       |
 | Read Committed   | Less Shit  |
 | Repeatable Read  | Still Shit |
-| Serializable     | Shit (*)   |
+| Serializable     | Shit [^1]  |
 
-_(*) Serializable is the intuitive isolation you'd expect from a transaction. But it's performance makes it shit._
+[^1]: Serializable is the intuitive isolation you'd expect from a transaction. But it's performance makes it shit.
 
 Most application uses _Read Committed_ isolation.
 
