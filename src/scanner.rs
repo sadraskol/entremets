@@ -99,6 +99,8 @@ pub enum TokenKind {
     Values,
     // update
     Update,
+    // for
+    For,
     // set
     Set,
     // is
@@ -273,7 +275,17 @@ impl Scanner {
                     TokenKind::Identifier
                 }
             }
-            'f' => self.check_keyword(1, "rom", TokenKind::From),
+            'f' => {
+                if self.current.index - self.start.index > 2 {
+                    match self.source.chars().nth(self.start.index + 1).unwrap() {
+                        'o' => self.check_keyword(2, "r", TokenKind::For),
+                        'r' => self.check_keyword(2, "om", TokenKind::From),
+                        _ => TokenKind::Identifier,
+                    }
+                } else {
+                    TokenKind::Identifier
+                }
+            }
             'i' => match self.current.index - self.start.index {
                 2 => match self.source.chars().nth(self.start.index + 1).unwrap() {
                     's' => self.check_keyword(2, "", TokenKind::Is),

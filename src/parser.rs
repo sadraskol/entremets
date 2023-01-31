@@ -50,6 +50,7 @@ pub enum Expression {
         columns: Vec<Variable>,
         from: Variable,
         condition: Option<Box<Expression>>,
+        locking: bool,
     },
     Update {
         relation: Variable,
@@ -630,6 +631,7 @@ impl Parser {
     }
 
     fn select(&mut self) -> Res<Expression> {
+        let mut locking = false;
         let mut columns = vec![];
         while self.matches(TokenKind::Identifier)? {
             columns.push(self.make_variable()?);
@@ -650,10 +652,19 @@ impl Parser {
             condition = Some(Box::new(expr));
         }
 
+        if self.matches(TokenKind::For)? {
+            self.consume(
+                TokenKind::Update,
+                "Expect update after lock condition in select",
+            )?;
+            locking = true
+        }
+
         Ok(Expression::Select {
             columns,
             from,
             condition,
+            locking,
         })
     }
 
@@ -743,6 +754,7 @@ fn formatting(expr: &Expression) -> String {
             columns,
             from,
             condition,
+            locking,
         } => {
             let mut res = "select ".to_string();
 
@@ -758,6 +770,10 @@ fn formatting(expr: &Expression) -> String {
 
             if let Some(cond) = condition {
                 res.push_str(&format!(" where {}", formatting(cond)))
+            }
+
+            if *locking {
+                res.push_str(" for update")
             }
 
             res
@@ -901,6 +917,7 @@ mod test {
                         operator: Operator::Equal,
                         right: Box::new(Expression::Integer(1)),
                     })),
+                    locking: false,
                 }),
                 operator: Operator::Is,
                 right: Box::new(Expression::Integer(11)),
@@ -933,6 +950,7 @@ mod test {
                         operator: Operator::Equal,
                         right: Box::new(Expression::Integer(1)),
                     })),
+                    locking: false,
                 }),
                 operator: Operator::Included,
                 right: Box::new(Expression::Set(vec![Expression::Integer(11)])),

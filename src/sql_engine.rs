@@ -47,15 +47,15 @@ enum LockMode {
 }
 
 #[derive(PartialEq, Debug, Clone)]
-struct Lock {
+pub struct Lock {
     row: Row,
     mode: LockMode,
 }
 
 #[derive(PartialEq, Debug, Clone)]
-struct Transaction {
+pub struct Transaction {
     changes: Vec<Changes>,
-    locks: Vec<Lock>,
+    pub locks: Vec<Lock>,
 }
 
 impl Transaction {
@@ -83,7 +83,7 @@ enum SqlContext {
 #[derive(PartialEq, Debug, Clone)]
 pub struct SqlDatabase {
     pub tables: HashMap<String, Vec<Row>>,
-    transactions: HashMap<usize, Transaction>,
+    pub transactions: HashMap<usize, Transaction>,
     tx: usize,
     sql_context: Option<SqlContext>,
 }
@@ -346,6 +346,7 @@ impl SqlDatabase {
         columns: &[Variable],
         from: &String,
         condition: &Option<Box<Expression>>,
+        locking: bool,
     ) -> Res<Vec<Value>> {
         let columns: Vec<_> = columns.iter().map(|v| v.name.clone()).collect();
         let rows = self.rows(tx, from);
@@ -357,6 +358,21 @@ impl SqlDatabase {
                     row: row.clone(),
                     table: from.clone(),
                 });
+                if locking {
+                    if self.is_locked(
+                        &tx.unwrap_or(TransactionId(usize::MAX)),
+                        row,
+                        LockMode::ForUpdate,
+                    ) {
+                        return Err(SqlEngineError::RowLockedError);
+                    } else if let Some(tx) = tx {
+                        let transaction = self.transactions.get_mut(&tx.0).unwrap();
+                        transaction.locks.push(Lock {
+                            row: row.clone(),
+                            mode: LockMode::ForUpdate,
+                        });
+                    }
+                }
                 if self.interpret(cond)? == Value::Bool(true) {
                     res.push(row.to_value(&columns))
                 }

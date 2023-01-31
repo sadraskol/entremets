@@ -91,7 +91,8 @@ impl Interpreter {
                 columns,
                 from,
                 condition,
-            } => self.interpret_select(columns, from, condition),
+                locking,
+            } => self.interpret_select(columns, from, condition, *locking),
             Expression::Update {
                 relation,
                 update,
@@ -181,12 +182,14 @@ impl Interpreter {
         columns: &[Variable],
         from: &Variable,
         condition: &Option<Box<Expression>>,
+        locking: bool,
     ) -> Res<Value> {
         let res = self.state.sql.select_in_table(
             &self.state.txs[self.idx],
             columns,
             &from.name,
             condition,
+            locking,
         )?;
 
         if res.len() == 1 {
