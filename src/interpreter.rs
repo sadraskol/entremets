@@ -52,13 +52,13 @@ impl Interpreter {
                 let value = self.interpret(never)?;
                 Ok(PropertyCheck::Always(value == Value::Bool(false)))
             }
-            _ => Err(Unexpected(format!("unsupported property: {:?}", property))),
+            _ => Err(Unexpected(format!("unsupported property: {property:?}"))),
         }
     }
 
     pub fn statement(&mut self, statement: &Statement) -> Unit {
         match statement {
-            Statement::Begin(isolation) => {
+            Statement::Begin(isolation, _tx_name) => {
                 self.next_state.txs[self.idx] =
                     Some(self.next_state.sql.open_transaction(*isolation));
             }
@@ -80,7 +80,7 @@ impl Interpreter {
             Statement::Latch => {
                 self.next_state.state[self.idx] = ProcessState::Waiting;
             }
-            _ => panic!("Unexpected statement in process: {:?}", statement),
+            _ => panic!("Unexpected statement in process: {statement:?}"),
         };
         Ok(())
     }

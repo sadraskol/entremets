@@ -3,19 +3,19 @@ init do
 end
 
 process do
-    begin read_committed
-    let first := select age from users where age = 30
-latch
-latch
-    let second := select age from users where age % 3 = 0
-    commit
+    transaction tx1 read_committed do
+        let first := select age from users where age = 30
+        latch
+        latch
+        let second := select age from users where age % 3 = 0
+    end
 end
 
 process do
-    begin read_committed
-latch
-    insert into users(id, age) values (3, 30)
-    commit
+    transaction tx2 read_committed do
+        latch
+        insert into users(id, age) values (3, 30)
+    end
 end
 
 property = eventually<first = {} and second = {}>

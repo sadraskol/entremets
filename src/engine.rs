@@ -13,6 +13,7 @@ pub enum Value {
 }
 
 impl Value {
+    #[allow(clippy::inherent_to_string)]
     pub fn to_string(&self) -> String {
         match self {
             Value::Nil => "nil".to_string(),
@@ -140,7 +141,7 @@ type Unit = Res<()>;
 pub fn model_checker(mets: &Mets) -> Result<Report, String> {
     match private_model_checker(mets) {
         Ok(res) => Ok(res),
-        Err(err) => Err(format!("{:?}", err)),
+        Err(err) => Err(format!("{err:?}")),
     }
 }
 

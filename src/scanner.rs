@@ -77,6 +77,8 @@ pub enum TokenKind {
     Do,
     // end
     End,
+    // transaction
+    Transaction,
     // begin
     Begin,
     // commit
@@ -341,6 +343,7 @@ impl Scanner {
                     TokenKind::Identifier
                 }
             }
+            't' => self.check_keyword(1, "ransaction", TokenKind::Transaction),
             'u' => self.check_keyword(1, "pdate", TokenKind::Update),
             'v' => self.check_keyword(1, "alues", TokenKind::Values),
             'w' => self.check_keyword(1, "here", TokenKind::Where),

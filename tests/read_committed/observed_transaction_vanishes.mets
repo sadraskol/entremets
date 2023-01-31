@@ -3,37 +3,37 @@ init do
 end
 
 process do
-    begin read_committed
-latch
-    update users set age := 11 where id = 1
-    update users set age := 19 where id = 2
-latch
-    commit
+    transaction tx1 read_committed do
+        latch
+        update users set age := 11 where id = 1
+        update users set age := 19 where id = 2
+        latch
+    end
 end
 
 process do
-    begin read_committed
-latch
-latch
-    update users set age := 12 where id = 1
-latch
-    update users set age := 18 where id = 2
-latch
-    commit
+    transaction tx2 read_committed do
+        latch
+        latch
+        update users set age := 12 where id = 1
+        latch
+        update users set age := 18 where id = 2
+        latch
+    end
 end
 
 process do
-    begin read_committed
-latch
-latch
-latch
-    let t1_1_age := select age from users where id = 1
-    let t2_1_age := select age from users where id = 2
-latch
-latch
-    let t1_2_age := select age from users where id = 1
-    let t2_2_age := select age from users where id = 2
-    commit
+    transaction tx3 read_committed do
+        latch
+        latch
+        latch
+        let t1_1_age := select age from users where id = 1
+        let t2_1_age := select age from users where id = 2
+        latch
+        latch
+        let t1_2_age := select age from users where id = 1
+        let t2_2_age := select age from users where id = 2
+    end
 end
 
 property = eventually<t1_1_age = 11 and t2_1_age = 19 and t1_2_age = 12 and t2_2_age = 18>

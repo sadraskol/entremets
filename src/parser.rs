@@ -23,7 +23,7 @@ impl<T> Deref for Lexeme<T> {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Statement {
-    Begin(IsolationLevel),
+    Begin(IsolationLevel, Option<Variable>),
     Commit,
     Abort,
     Expression(Expression),
@@ -91,6 +91,7 @@ pub enum Operator {
 
 pub struct Parser {
     scanner: Scanner,
+    manual_commit: bool,
     previous: Token,
     current: Token,
     result: Mets,
@@ -130,6 +131,7 @@ impl Parser {
     pub fn new(source: String) -> Self {
         Parser {
             scanner: Scanner::new(source),
+            manual_commit: false,
             previous: Token::uninitialized(),
             current: Token::uninitialized(),
             result: Mets {
@@ -210,7 +212,7 @@ impl Parser {
 
         let mut statements = vec![];
         while self.current.kind != TokenKind::End {
-            statements.push(self.statement()?);
+            self.statement(&mut statements)?;
         }
         self.result.init = statements;
 
@@ -228,7 +230,7 @@ impl Parser {
 
         let mut statements = vec![];
         while self.current.kind != TokenKind::End {
-            statements.push(self.statement()?);
+            self.statement(&mut statements)?;
         }
         self.result.processes.push(statements);
 
@@ -250,42 +252,79 @@ impl Parser {
     fn property_declaration(&mut self) -> Unit {
         self.consume(TokenKind::Equal, "Expect = after property declaration")?;
 
-        let statement = self.statement()?;
-        self.result.properties.push(statement);
+        let mut statements = vec![];
+        self.statement(&mut statements)?;
+        self.result.properties.push(statements.remove(0));
 
         Ok(())
     }
 
-    fn statement(&mut self) -> Res<Statement> {
-        let res = if self.matches(TokenKind::Let)? {
-            self.assignment_statement()
+    fn statement(&mut self, writer: &mut Vec<Statement>) -> Unit {
+        if self.matches(TokenKind::Let)? {
+            self.assignment_statement(writer)?;
+        } else if self.matches(TokenKind::Transaction)? {
+            self.transaction_statement(writer)?;
         } else if self.matches(TokenKind::Begin)? {
-            self.begin_statement()
+            self.begin_statement(writer)?;
         } else if self.matches(TokenKind::Commit)? {
-            self.commit_statement()
+            self.commit_statement(writer)?;
         } else if self.matches(TokenKind::Abort)? {
-            self.abort_statement()
+            self.abort_statement(writer)?;
         } else if self.matches(TokenKind::Latch)? {
-            self.latch_statement()
+            self.latch_statement(writer)?;
         } else if self.matches(TokenKind::Always)? {
-            self.always_statement()
+            self.always_statement(writer)?;
         } else if self.matches(TokenKind::Never)? {
-            self.never_statement()
+            self.never_statement(writer)?;
         } else if self.matches(TokenKind::Eventually)? {
-            self.eventually_statement()
+            self.eventually_statement(writer)?;
         } else {
-            self.expression_statement()
+            self.expression_statement(writer)?;
         };
 
-        self.end_line()?;
-
-        res
+        self.end_line()
     }
 
-    fn assignment_statement(&mut self) -> Res<Statement> {
+    fn assignment_statement(&mut self, writer: &mut Vec<Statement>) -> Unit {
         let expr = self.assignment()?;
 
-        Ok(Statement::Expression(expr))
+        writer.push(Statement::Expression(expr));
+        Ok(())
+    }
+
+    fn transaction_statement(&mut self, writer: &mut Vec<Statement>) -> Unit {
+        let tx_name = self.parse_variable("Expect transaction name")?;
+        self.consume(
+            TokenKind::Identifier,
+            "Expect isolation level after transaction name",
+        )?;
+
+        match self.previous.lexeme.as_str() {
+            "read_committed" => {
+                self.consume(TokenKind::Do, "Expect block after transaction statement")?;
+                self.end_line()?;
+
+                writer.push(Statement::Begin(
+                    IsolationLevel::ReadCommitted,
+                    Some(tx_name),
+                ));
+                self.manual_commit = false;
+
+                while self.current.kind != TokenKind::End {
+                    self.statement(writer)?;
+                }
+
+                self.consume(TokenKind::End, "Expect to close transaction block")?;
+
+                if !self.manual_commit {
+                    writer.push(Statement::Commit);
+                }
+                Ok(())
+            }
+            _ => Err(Unexpected(
+                "Expected following isolation level: read_committed".to_string(),
+            )),
+        }
     }
 
     fn parse_variable(&mut self, expected: &str) -> Res<Variable> {
@@ -294,30 +333,38 @@ impl Parser {
         self.make_variable()
     }
 
-    fn begin_statement(&mut self) -> Res<Statement> {
+    fn begin_statement(&mut self, writer: &mut Vec<Statement>) -> Unit {
         self.consume(TokenKind::Identifier, "Expect isolation level after begin")?;
 
         match self.previous.lexeme.as_str() {
-            "read_committed" => Ok(Statement::Begin(IsolationLevel::ReadCommitted)),
+            "read_committed" => {
+                writer.push(Statement::Begin(IsolationLevel::ReadCommitted, None));
+                Ok(())
+            }
             _ => Err(Unexpected(
                 "Expected following isolation level: read_committed".to_string(),
             )),
         }
     }
 
-    fn commit_statement(&mut self) -> Res<Statement> {
-        Ok(Statement::Commit)
+    fn commit_statement(&mut self, writer: &mut Vec<Statement>) -> Unit {
+        writer.push(Statement::Commit);
+        self.manual_commit = true;
+        Ok(())
     }
 
-    fn abort_statement(&mut self) -> Res<Statement> {
-        Ok(Statement::Abort)
+    fn abort_statement(&mut self, writer: &mut Vec<Statement>) -> Unit {
+        writer.push(Statement::Abort);
+        self.manual_commit = true;
+        Ok(())
     }
 
-    fn latch_statement(&mut self) -> Res<Statement> {
-        Ok(Statement::Latch)
+    fn latch_statement(&mut self, writer: &mut Vec<Statement>) -> Unit {
+        writer.push(Statement::Latch);
+        Ok(())
     }
 
-    fn always_statement(&mut self) -> Res<Statement> {
+    fn always_statement(&mut self, writer: &mut Vec<Statement>) -> Unit {
         self.consume(TokenKind::LeftBracket, "Expect [ to open always statement")?;
 
         let expr = self.expression()?;
@@ -326,19 +373,22 @@ impl Parser {
             TokenKind::RightBracket,
             "Expect ] to close always statement",
         )?;
-        Ok(Statement::Always(expr))
+
+        writer.push(Statement::Always(expr));
+        Ok(())
     }
 
-    fn never_statement(&mut self) -> Res<Statement> {
+    fn never_statement(&mut self, writer: &mut Vec<Statement>) -> Unit {
         self.consume(TokenKind::LeftBracket, "Expect [ to open never statement")?;
 
         let expr = self.expression()?;
 
         self.consume(TokenKind::RightBracket, "Expect ] to close never statement")?;
-        Ok(Statement::Never(expr))
+        writer.push(Statement::Never(expr));
+        Ok(())
     }
 
-    fn eventually_statement(&mut self) -> Res<Statement> {
+    fn eventually_statement(&mut self, writer: &mut Vec<Statement>) -> Unit {
         self.consume(
             TokenKind::LeftCarret,
             "Expect < to open eventually statement",
@@ -350,12 +400,14 @@ impl Parser {
             TokenKind::RightCarret,
             "Expect > to close eventually statement",
         )?;
-        Ok(Statement::Eventually(expr))
+        writer.push(Statement::Eventually(expr));
+        Ok(())
     }
 
-    fn expression_statement(&mut self) -> Res<Statement> {
+    fn expression_statement(&mut self, writer: &mut Vec<Statement>) -> Unit {
         let expr = self.expression()?;
-        Ok(Statement::Expression(expr))
+        writer.push(Statement::Expression(expr));
+        Ok(())
     }
 
     fn expression(&mut self) -> Res<Expression> {
@@ -809,7 +861,8 @@ fn formatting(expr: &Expression) -> String {
 
 pub fn format_statement(stmt: &Statement) -> String {
     match stmt {
-        Statement::Begin(level) => format!("begin {:?}", level),
+        Statement::Begin(level, Some(tx_name)) => format!("begin {level:?} ({})", tx_name.name),
+        Statement::Begin(level, None) => format!("begin {level:?}"),
         Statement::Commit => "commit".to_string(),
         Statement::Abort => "abort".to_string(),
         Statement::Expression(expr) => formatting(expr),
@@ -830,6 +883,8 @@ mod test {
             Parser::new("eventually<select age from users where id = 1 is 11>\n".to_string());
         parser.advance().unwrap();
 
+        let mut statements = vec![];
+        parser.statement(&mut statements).unwrap();
         assert_eq!(
             Statement::Eventually(Expression::Binary {
                 left: Box::new(Expression::Select {
@@ -850,7 +905,7 @@ mod test {
                 operator: Operator::Is,
                 right: Box::new(Expression::Integer(11)),
             }),
-            parser.statement().unwrap()
+            statements[0]
         );
     }
 
@@ -860,6 +915,8 @@ mod test {
             Parser::new("eventually<select age from users where id = 1 in {11}>\n".to_string());
         parser.advance().unwrap();
 
+        let mut statements = vec![];
+        parser.statement(&mut statements).unwrap();
         assert_eq!(
             Statement::Eventually(Expression::Binary {
                 left: Box::new(Expression::Select {
@@ -880,7 +937,7 @@ mod test {
                 operator: Operator::Included,
                 right: Box::new(Expression::Set(vec![Expression::Integer(11)])),
             }),
-            parser.statement().unwrap()
+            statements[0]
         );
     }
 }

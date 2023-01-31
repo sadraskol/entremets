@@ -8,6 +8,7 @@ Entremets on the other hand is a testing library to intertwine your sql queries.
 
 It's difficult to identify serializable anomalies.
 This project aims at:
+
 - Provide a simple language to translate production code
 - Quickly find anomalies
 - Test solutions

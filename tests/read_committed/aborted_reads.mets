@@ -3,9 +3,10 @@ init do
 end
 
 process do
-    begin read_committed
-    update users set age := 101 where id = 1
-    abort
+    transaction tx1 read_committed do
+        update users set age := 101 where id = 1
+        abort
+    end
 end
 
 property = always[select age from users is 10]

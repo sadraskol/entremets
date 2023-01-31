@@ -3,17 +3,17 @@ init do
 end
 
 process do
-    begin read_committed
-    let t1_age := select age from users where id = 1
-    update users set age := t1_age + 1 where id = 1
-    commit
+    transaction tx1 read_committed do
+        let t1_age := select age from users where id = 1
+        update users set age := t1_age + 1 where id = 1
+    end
 end
 
 process do
-    begin read_committed
-    let t2_age := select age from users where id = 1
-    update users set age := t2_age * 2 where id = 1
-    commit
+    transaction tx2 read_committed do
+        let t2_age := select age from users where id = 1
+        update users set age := t2_age * 2 where id = 1
+    end
 end
 
 property = eventually<select age from users where id = 1 in {21, 22}>
