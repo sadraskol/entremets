@@ -3,20 +3,15 @@
    You can adapt this file completely to your liking, but it should at least
    contain the root `toctree` directive.
 
-Welcome to entremets's documentation!
+Entremets
 =====================================
+
+.. DANGER::
+   This project is still work in progress. If you have any problems,
+   please issue a bug in `github <https://github.com/sadraskol/entremets>`.
 
 .. toctree::
    :maxdepth: 2
    :caption: Contents:
 
    tutorial
-
-
-
-Indices and tables
-==================
-
-* :ref:`genindex`
-* :ref:`modindex`
-* :ref:`search`

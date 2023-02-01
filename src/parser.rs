@@ -244,7 +244,7 @@ impl Parser {
     }
 
     fn end_line(&mut self) -> Unit {
-        if !self.matches(TokenKind::Eof)? {
+        if self.current.kind != TokenKind::Eof {
             self.consume(TokenKind::Newline, "Expect newline after declaration")?;
         }
         self.skip_newlines()
