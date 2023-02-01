@@ -27,6 +27,7 @@ Run the specification with :code:`cargo run no-transaction.mets`.
 The output tells us it explored the possible states:
 
 .. code-block:: text
+
     No counter example found
     States explored: 14
 
@@ -60,6 +61,7 @@ Let's check again with entremets :code:`cargo run no-transaction.mets`.
 This time the output is a little different:
 
 .. code-block:: text
+
     Following property was violated: eventually<select age from users where id = 1 in {21, 22}>
     The following counter example was found:
     users: {(id: 1, age: 10)}
@@ -109,6 +111,7 @@ But using transaction is not enough.
 Entremets can also tell that there's an issue:
 
 .. code-block:: text
+
     Following property was violated: eventually<select age from users where id = 1 in {21, 22}>
     The following counter example was found:
     users: {(age: 10, id: 1)}
@@ -169,6 +172,7 @@ SQL offers :code:`select for update` to achieve this:
 And entremets tells us it cannot find issues with this code:
 
 .. code-block:: text
+
     No counter example found
     States explored: 22
 
