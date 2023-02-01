@@ -1,7 +1,7 @@
 Getting started
 ==================
 
-Clone the `repository <https://github.com/sadraskol/entremets>`
+Clone the `repository <https://github.com/sadraskol/entremets>`_
 and run :code:`cargo build`.
 
 Let's write the first code:
