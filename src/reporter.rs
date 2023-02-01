@@ -70,11 +70,5 @@ fn sql_summary(global: &SqlDatabase) -> String {
         x.push_str("}\n");
     }
 
-    for (_, tx) in &global.transactions {
-        for lock in &tx.locks {
-            x.push_str(&format!("\nlock on row {:?}", lock));
-        }
-    }
-
     x
 }

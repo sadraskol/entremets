@@ -184,7 +184,7 @@ impl Interpreter {
         condition: &Option<Box<Expression>>,
         locking: bool,
     ) -> Res<Value> {
-        let res = self.state.sql.select_in_table(
+        let res = self.next_state.sql.select_in_table(
             &self.state.txs[self.idx],
             columns,
             &from.name,
