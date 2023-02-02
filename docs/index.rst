@@ -6,12 +6,13 @@
 Entremets
 =====================================
 
-.. DANGER::
+.. WARNING::
    This project is still work in progress. If you have any problems,
-   please issue a bug in `github <https://github.com/sadraskol/entremets>`.
+   please issue a bug in `github <https://github.com/sadraskol/entremets>`_.
 
 .. toctree::
    :maxdepth: 2
    :caption: Contents:
 
    tutorial
+   background
