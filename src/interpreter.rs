@@ -1,37 +1,7 @@
 use crate::engine::{ProcessState, PropertyCheck, State, Value};
 use crate::interpreter::InterpreterError::{TypeError, Unexpected};
-use crate::parser::{Expression, Operator, SqlExpression, SqlOperator, Statement, Variable};
-use crate::sql_engine::SqlEngineError;
-
-enum InterpretKind<'a> {
-    Nature(&'a Expression),
-    Sql(&'a SqlExpression),
-}
-
-trait Interpretable {
-    fn kind(&self) -> InterpretKind;
-    fn to_expression(&self) -> Expression;
-}
-
-impl Interpretable for Expression {
-    fn kind(&self) -> InterpretKind {
-        InterpretKind::Nature(self)
-    }
-
-    fn to_expression(&self) -> Expression {
-        self.clone()
-    }
-}
-
-impl Interpretable for SqlExpression {
-    fn kind(&self) -> InterpretKind {
-        InterpretKind::Sql(self)
-    }
-
-    fn to_expression(&self) -> Expression {
-        Expression::Sql(self.clone())
-    }
-}
+use crate::parser::{Expression, Operator, SqlExpression, Statement};
+use crate::sql_interpreter::SqlEngineError;
 
 #[derive(Debug)]
 pub enum InterpreterError {
@@ -117,7 +87,11 @@ impl Interpreter {
 
     fn interpret(&mut self, expression: &Expression) -> Res<Value> {
         match expression {
-            Expression::Sql(sql_expr) => self.interpret_sql(sql_expr),
+            Expression::Sql(sql_expr) => {
+                self.next_state.sql.cur_tx = self.state.txs[self.idx];
+                let reified = self.reify_up_variable(sql_expr)?;
+                Ok(self.next_state.sql.interpret(&reified)?)
+            }
             Expression::Assignment(variable, expr) => {
                 let value = self.interpret(expr)?;
                 let name = variable.name.clone();
@@ -155,169 +129,27 @@ impl Interpreter {
         }
     }
 
-    fn interpret_sql(&mut self, expr: &SqlExpression) -> Res<Value> {
-        match expr {
-            SqlExpression::Select { columns, from, condition, locking } =>
-                self.interpret_select(columns, from, condition, *locking),
-
-            SqlExpression::Update { relation, update, condition } =>
-                self.interpret_update(relation, update, condition),
-            SqlExpression::Insert { relation, columns, values } =>
-                self.interpret_insert(relation, columns, values),
-            SqlExpression::Binary { left, operator, right } =>
-                self.interpret_sql_binary(left, operator, right),
-            SqlExpression::Assignment(var, value_expr) => {
-                let value = self.interpret_sql(value_expr)?;
-                let name = var.name.clone();
-                self.next_state.locals.insert(name, value);
-                Ok(Value::Nil)
-            }
-            SqlExpression::Integer(i) => {
-                Ok(Value::Integer(*i))
-            }
-        }
-    }
-
-    fn interpret_sql_binary(
-        &mut self,
-        left: &SqlExpression,
-        operator: &SqlOperator,
-        right: &SqlExpression,
-    ) -> Res<Value> {
-        match operator {
-            SqlOperator::Add => {
-                let left = self.assert_integer(left)?;
-                let right = self.assert_integer(right)?;
-                Ok(Value::Integer(left + right))
-            }
-            SqlOperator::Multiply => {
-                let left = self.assert_integer(left)?;
-                let right = self.assert_integer(right)?;
-                Ok(Value::Integer(left * right))
-            }
-            SqlOperator::Rem => {
-                let left = self.assert_integer(left)?;
-                let right = self.assert_integer(right)?;
-                Ok(Value::Integer(left % right))
-            }
-            SqlOperator::Equal => {
-                let left = self.interpret_sql(left)?;
-                let right = self.interpret_sql(right)?;
-                Ok(Value::Bool(left == right))
-            }
-            SqlOperator::LessEqual => {
-                let left = self.assert_integer(left)?;
-                let right = self.assert_integer(right)?;
-                Ok(Value::Bool(left <= right))
-            }
-            SqlOperator::Less => {
-                let left = self.assert_integer(left)?;
-                let right = self.assert_integer(right)?;
-                Ok(Value::Bool(left < right))
-            }
-            SqlOperator::And => {
-                let left = self.assert_bool(left)?;
-                let right = self.assert_bool(right)?;
-                Ok(Value::Bool(left && right))
-            }
-        }
-    }
-
-    fn interpret_insert(
-        &mut self,
-        relation: &Variable,
-        columns: &[Variable],
-        exprs: &[Expression],
-    ) -> Res<Value> {
-        let mut values = vec![];
-        for expr in exprs {
-            values.push(self.assert_tuple(expr)?)
-        }
-
-        self.next_state.sql.insert_in_table(
-            &self.state.txs[self.idx],
-            &relation.name,
-            values,
-            columns,
-        );
-
-        Ok(Value::Nil)
-    }
-
-    fn interpret_update(
-        &mut self,
-        relation: &Variable,
-        update: &Expression,
-        condition: &Option<Box<Expression>>,
-    ) -> Res<Value> {
-        let update_sql = self.sql_update_expression(update)?;
-        self.next_state.sql.update_in_table(
-            &self.state.txs[self.idx],
-            &relation.name,
-            &update_sql,
-            condition,
-        )?;
-
-        Ok(Value::Nil)
-    }
-
-    fn interpret_select(
-        &mut self,
-        columns: &[Variable],
-        from: &Variable,
-        condition: &Option<Box<Expression>>,
-        locking: bool,
-    ) -> Res<Value> {
-        let res = self.next_state.sql.select_in_table(
-            &self.state.txs[self.idx],
-            columns,
-            &from.name,
-            condition,
-            locking,
-        )?;
-
-        if res.len() == 1 {
-            let row = if let Value::Tuple(x) = &res[0] {
-                x
-            } else {
-                panic!("expected to be a tuple")
-            };
-            if row.len() == 1 {
-                return Ok(row[0].clone());
-            }
-        }
-
-        Ok(Value::Set(res))
-    }
-
-    fn generic_interpret<T: Interpretable>(&mut self, expr: &T) -> Res<Value> {
-        match expr.kind() {
-            InterpretKind::Nature(expr) => self.interpret(expr),
-            InterpretKind::Sql(expr) => self.interpret_sql(expr),
-        }
-    }
-
-    fn assert_integer<T: Interpretable>(&mut self, expr: &T) -> Res<i16> {
-        if let Value::Integer(value) = self.generic_interpret(expr)? {
+    fn assert_integer(&mut self, expr: &Expression) -> Res<i16> {
+        if let Value::Integer(value) = self.interpret(expr)? {
             Ok(value)
         } else {
-            Err(TypeError(expr.to_expression(), "integer".to_string()))
+            Err(TypeError(expr.clone(), "integer".to_string()))
         }
     }
 
-    fn assert_set<T: Interpretable>(&mut self, expr: &T) -> Res<Vec<Value>> {
-        if let Value::Set(value) = self.generic_interpret(expr)? {
+    fn assert_set(&mut self, expr: &Expression) -> Res<Vec<Value>> {
+        if let Value::Set(value) = self.interpret(expr)? {
             Ok(value)
         } else {
-            Err(TypeError(expr.to_expression(), "set".to_string()))
+            Err(TypeError(expr.clone(), "set".to_string()))
         }
     }
 
-    fn assert_bool<T: Interpretable>(&mut self, expr: &T) -> Res<bool> {
-        if let Value::Bool(value) = self.generic_interpret(expr)? {
+    fn assert_bool(&mut self, expr: &Expression) -> Res<bool> {
+        if let Value::Bool(value) = self.interpret(expr)? {
             Ok(value)
         } else {
-            Err(TypeError(expr.to_expression(), "bool".to_string()))
+            Err(TypeError(expr.clone(), "bool".to_string()))
         }
     }
 
@@ -388,33 +220,85 @@ impl Interpreter {
             }
         }
     }
-
-    fn sql_translate(&mut self, expr: &mut Expression) -> Unit {
+    fn reify_up_variable(&self, expr: &SqlExpression) -> Res<SqlExpression> {
         match expr {
-            Expression::Assignment(_x, y) => {
-                self.sql_translate(y)?;
+            SqlExpression::Select {
+                columns,
+                from,
+                condition,
+                locking,
+            } => {
+                let condition = if let Some(cond) = condition {
+                    Some(Box::new(self.reify_up_variable(cond)?))
+                } else {
+                    None
+                };
+                Ok(SqlExpression::Select {
+                    columns: columns.clone(),
+                    from: from.clone(),
+                    condition,
+                    locking: *locking,
+                })
             }
-            Expression::Var(variable) => {
-                let y = self
-                    .state
+            SqlExpression::Update {
+                relation,
+                update,
+                condition,
+            } => {
+                let condition = if let Some(cond) = condition {
+                    Some(Box::new(self.reify_up_variable(cond)?))
+                } else {
+                    None
+                };
+                Ok(SqlExpression::Update {
+                    relation: relation.clone(),
+                    update: Box::new(self.reify_up_variable(update)?),
+                    condition,
+                })
+            }
+            SqlExpression::Insert {
+                relation,
+                columns,
+                values,
+            } => {
+                let mut res = vec![];
+                for value in values {
+                    res.push(self.reify_up_variable(value)?);
+                }
+                Ok(SqlExpression::Insert {
+                    relation: relation.clone(),
+                    columns: columns.clone(),
+                    values: res,
+                })
+            }
+            SqlExpression::Binary {
+                left,
+                operator,
+                right,
+            } => Ok(SqlExpression::Binary {
+                left: Box::new(self.reify_up_variable(left)?),
+                operator: operator.clone(),
+                right: Box::new(self.reify_up_variable(right)?),
+            }),
+            SqlExpression::Tuple(values) => {
+                let mut res = vec![];
+                for value in values {
+                    res.push(self.reify_up_variable(value)?);
+                }
+                Ok(SqlExpression::Tuple(res))
+            }
+            SqlExpression::Assignment(var, expr) => Ok(SqlExpression::Assignment(
+                var.clone(),
+                Box::new(self.reify_up_variable(expr)?),
+            )),
+            SqlExpression::UpVariable(variable) => Ok(SqlExpression::Value(
+                self.state
                     .locals
                     .get(&variable.name)
                     .cloned()
-                    .unwrap_or(Value::Nil);
-                *expr = Expression::Value(y);
-            }
-            Expression::Binary { left, right, .. } => {
-                self.sql_translate(left)?;
-                self.sql_translate(right)?;
-            }
-            _ => {}
+                    .unwrap_or(Value::Nil),
+            )),
+            expr => Ok(expr.clone()),
         }
-        Ok(())
-    }
-
-    fn sql_update_expression(&mut self, expr: &Expression) -> Res<Expression> {
-        let mut sql_expr = expr.clone();
-        self.sql_translate(&mut sql_expr)?;
-        Ok(sql_expr.clone())
     }
 }

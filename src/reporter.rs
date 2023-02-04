@@ -1,6 +1,6 @@
 use crate::engine::Report;
 use crate::parser::{format_statement, Mets};
-use crate::sql_engine::SqlDatabase;
+use crate::sql_interpreter::SqlDatabase;
 
 pub fn summary(mets: &Mets, report: &Report) -> String {
     let mut base = if let Some(violation) = &report.violation {

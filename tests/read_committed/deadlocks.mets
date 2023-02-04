@@ -1,19 +1,19 @@
 init do
-    insert into accounts (id, balance) values (11, 0), (22, 0)
+    `insert into accounts (id, balance) values (11, 0), (22, 0)`
 end
 
 process do
     transaction tx1 read_committed do
-        update accounts set balance := 100 where id = 11
-        update accounts set balance := 100 where id = 22
+        `update accounts set balance := 100 where id = 11`
+        `update accounts set balance := 100 where id = 22`
     end
 end
 
 process do
     transaction tx2 read_committed do
-        update accounts set balance := 50 where id = 22
-        update accounts set balance := 50 where id = 11
+        `update accounts set balance := 50 where id = 22`
+        `update accounts set balance := 50 where id = 11`
     end
 end
 
-property = eventually<select balance from accounts in {{50, 50}, {100, 100}}>
+property = eventually<`select balance from accounts` in {{50, 50}, {100, 100}}>

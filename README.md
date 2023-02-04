@@ -36,20 +36,20 @@ The code in entremets is:
 
 ``` mets
 init do
-    insert into users (id, age) values (1, 10)
+    `insert into users (id, age) values (1, 10)`
 end
 
 process do
     begin read_committed
-    let t1_age := select age from users where id = 1
-    update users set age := t1_age + 1 where id = 1
+    let t1_age := `select age from users where id = 1`
+    `update users set age := t1_age + 1 where id = 1`
     commit
 end
 
 process do
     begin read_committed
-    let t2_age := select age from users where id = 1
-    update users set age := t2_age * 2 where id = 1
+    let t2_age := `select age from users where id = 1`
+    `update users set age := t2_age * 2 where id = 1`
     commit
 end
 ```
@@ -59,7 +59,7 @@ You'd expect `select age from users where id = 1` to be either `21` or `22` when
 In entremets, you can test this property by adding this line to the specifications:
 
 ``` mets
-property = eventually<select age from users where id = 1 in {21, 22}>
+property = eventually<`select age from users where id = 1` in {21, 22}>
 ```
 
 Now lets run this mets (mets are the specification, entremets finds the anomalies) under entremets:

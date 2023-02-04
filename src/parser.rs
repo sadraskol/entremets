@@ -48,26 +48,31 @@ pub enum SqlExpression {
     Select {
         columns: Vec<Variable>,
         from: Variable,
-        condition: Option<Box<Expression>>,
+        condition: Option<Box<SqlExpression>>,
         locking: bool,
     },
     Update {
         relation: Variable,
-        update: Box<Expression>,
-        condition: Option<Box<Expression>>,
+        update: Box<SqlExpression>,
+        condition: Option<Box<SqlExpression>>,
     },
     Insert {
         relation: Variable,
         columns: Vec<Variable>,
-        values: Vec<Expression>,
+        values: Vec<SqlExpression>,
     },
     Binary {
         left: Box<SqlExpression>,
         operator: SqlOperator,
         right: Box<SqlExpression>,
     },
+    Tuple(Vec<SqlExpression>),
     Assignment(Variable, Box<SqlExpression>),
+    Var(Variable),
     Integer(i16),
+    UpVariable(Variable),
+    // UpVariables are translated to value
+    Value(Value),
 }
 
 #[derive(PartialEq, Debug, Clone)]
@@ -176,13 +181,13 @@ impl Parser {
         }
     }
 
-    pub fn compile(mut self) -> Result<Mets, ParserError> {
+    pub fn compile(mut self) -> Result<Mets, Box<ParserError>> {
         match self.private_compile() {
             Ok(_) => Ok(self.result),
-            Err(kind) => Err(ParserError {
+            Err(kind) => Err(Box::new(ParserError {
                 current: self.current,
                 kind,
-            })
+            })),
         }
     }
 
@@ -220,11 +225,15 @@ impl Parser {
         let mut advances = 1;
         let mut current = self.current.clone();
         loop {
-            let Token { kind: next_kind, .. } = current;
+            let Token {
+                kind: next_kind, ..
+            } = current;
             if next_kind == TokenKind::Newline {
                 advances += 1;
             } else if next_kind == kind {
-                for _ in 0..advances { self.advance()?; }
+                for _ in 0..advances {
+                    self.advance()?;
+                }
                 return Ok(true);
             } else {
                 return Ok(false);
@@ -258,7 +267,10 @@ impl Parser {
 
     fn init_declaration(&mut self) -> Unit {
         self.consume(TokenKind::Do, "Expected do after init declaration")?;
-        self.consume(TokenKind::Newline, "Expected newline after init declaration")?;
+        self.consume(
+            TokenKind::Newline,
+            "Expected newline after init declaration",
+        )?;
 
         let mut statements = vec![];
         while self.current.kind != TokenKind::End {
@@ -266,7 +278,10 @@ impl Parser {
         }
         self.result.init = statements;
 
-        self.consume(TokenKind::End, "Expected end at the end of init declaration")?;
+        self.consume(
+            TokenKind::End,
+            "Expected end at the end of init declaration",
+        )?;
 
         self.end_line()
     }
@@ -384,7 +399,10 @@ impl Parser {
     }
 
     fn begin_statement(&mut self, writer: &mut Vec<Statement>) -> Unit {
-        self.consume(TokenKind::Identifier, "Expected isolation level after begin")?;
+        self.consume(
+            TokenKind::Identifier,
+            "Expected isolation level after begin",
+        )?;
 
         match self.previous.lexeme.as_str() {
             "read_committed" => {
@@ -415,7 +433,10 @@ impl Parser {
     }
 
     fn always_statement(&mut self, writer: &mut Vec<Statement>) -> Unit {
-        self.consume(TokenKind::LeftBracket, "Expected [ to open always statement")?;
+        self.consume(
+            TokenKind::LeftBracket,
+            "Expected [ to open always statement",
+        )?;
 
         let expr = self.expression()?;
 
@@ -433,7 +454,10 @@ impl Parser {
 
         let expr = self.expression()?;
 
-        self.consume(TokenKind::RightBracket, "Expected ] to close never statement")?;
+        self.consume(
+            TokenKind::RightBracket,
+            "Expected ] to close never statement",
+        )?;
         writer.push(Statement::Never(expr));
         Ok(())
     }
@@ -512,6 +536,117 @@ impl Parser {
         }
 
         Ok(expr)
+    }
+
+    fn sql_assignment(&mut self) -> Res<SqlExpression> {
+        let mut expr = self.sql_and()?;
+
+        if self.matches(TokenKind::ColonEqual)? {
+            let name = if let SqlExpression::Var(name) = expr {
+                name
+            } else {
+                return Err(Unexpected(format!(
+                    "Expected variable before := assignment at {:?}",
+                    self.previous
+                )));
+            };
+            let value = self.sql_assignment()?;
+            expr = SqlExpression::Assignment(name, Box::new(value));
+        }
+
+        Ok(expr)
+    }
+
+    fn sql_and(&mut self) -> Res<SqlExpression> {
+        let mut expr = self.sql_equality()?;
+
+        if self.matches_forward(TokenKind::And)? {
+            let right = self.sql_and()?;
+            expr = SqlExpression::Binary {
+                left: Box::new(expr),
+                operator: SqlOperator::And,
+                right: Box::new(right),
+            };
+        }
+
+        Ok(expr)
+    }
+
+    fn sql_equality(&mut self) -> Res<SqlExpression> {
+        let mut expr = self.sql_factor()?;
+
+        if self.matches_forward(TokenKind::Equal)? {
+            let right = self.sql_factor()?;
+            expr = SqlExpression::Binary {
+                left: Box::new(expr),
+                operator: SqlOperator::Equal,
+                right: Box::new(right),
+            };
+        }
+
+        Ok(expr)
+    }
+
+    fn sql_factor(&mut self) -> Res<SqlExpression> {
+        let mut expr = self.sql_add()?;
+
+        if self.matches_forward(TokenKind::Star)? {
+            let right = self.sql_add()?;
+            expr = SqlExpression::Binary {
+                left: Box::new(expr),
+                operator: SqlOperator::Multiply,
+                right: Box::new(right),
+            };
+        }
+
+        Ok(expr)
+    }
+
+    fn sql_add(&mut self) -> Res<SqlExpression> {
+        let mut expr = self.sql_rem()?;
+
+        if self.matches_forward(TokenKind::Plus)? {
+            let right = self.sql_rem()?;
+            expr = SqlExpression::Binary {
+                left: Box::new(expr),
+                operator: SqlOperator::Add,
+                right: Box::new(right),
+            };
+        }
+
+        Ok(expr)
+    }
+
+    fn sql_rem(&mut self) -> Res<SqlExpression> {
+        let mut expr = self.sql_primary()?;
+
+        if self.matches_forward(TokenKind::Percent)? {
+            let right = self.sql_primary()?;
+            expr = SqlExpression::Binary {
+                left: Box::new(expr),
+                operator: SqlOperator::Rem,
+                right: Box::new(right),
+            };
+        }
+
+        Ok(expr)
+    }
+
+    fn sql_primary(&mut self) -> Res<SqlExpression> {
+        if self.matches(TokenKind::Number)? {
+            let i = i16::from_str(&self.previous.lexeme)?;
+            Ok(SqlExpression::Integer(i))
+        } else if self.matches(TokenKind::Dollar)? {
+            self.consume(TokenKind::Identifier, "Expect identifier after $")?;
+            Ok(SqlExpression::UpVariable(self.make_variable()?))
+        } else if self.matches(TokenKind::Identifier)? {
+            Ok(SqlExpression::Var(self.make_variable()?))
+        } else {
+            Err(Unexpected(format!(
+                "Expected sql expression, got a {:?}",
+                self.current.kind
+            )))
+        }
     }
 
     fn included(&mut self) -> Res<Expression> {
@@ -639,8 +774,14 @@ impl Parser {
         let mut expr = self.primary()?;
 
         if self.matches(TokenKind::Dot)? {
-            self.consume(TokenKind::Identifier, "Expected identifier after \".\" for member expression")?;
-            expr = Expression::Member { call_site: Box::new(expr), member: self.make_variable()? };
+            self.consume(
+                TokenKind::Identifier,
+                "Expected identifier after \".\" for member expression",
+            )?;
+            expr = Expression::Member {
+                call_site: Box::new(expr),
+                member: self.make_variable()?,
+            };
         }
 
         Ok(expr)
@@ -691,9 +832,28 @@ impl Parser {
             }
             self.skip_newlines()?;
         }
-        self.consume(TokenKind::RightBrace, "Expected } to close a set expression")?;
+        self.consume(
+            TokenKind::RightBrace,
+            "Expected } to close a set expression",
+        )?;
 
         Ok(Expression::Set(members))
+    }
+
+    fn sql_tuple(&mut self) -> Res<SqlExpression> {
+        let mut members = vec![];
+        loop {
+            let member = self.sql_assignment()?;
+            members.push(member);
+
+            if !self.matches(TokenKind::Comma)? {
+                break;
+            }
+        }
+
+        self.consume(TokenKind::RightParen, "Expected closing ) for tuple")?;
+
+        Ok(SqlExpression::Tuple(members))
     }
 
     fn tuple(&mut self) -> Res<Expression> {
@@ -726,7 +886,13 @@ impl Parser {
             )))
         }?;
 
-        self.consume(TokenKind::Backtick, "Expected ` to end sql expression")?;
+        self.consume(
+            TokenKind::Backtick,
+            &format!(
+                "Expected ` to end sql expression '{}'",
+                formatting_sql(&sql)
+            ),
+        )?;
 
         Ok(Expression::Sql(sql))
     }
@@ -749,7 +915,7 @@ impl Parser {
 
         let mut condition = None;
         if self.matches(TokenKind::Where)? {
-            let expr = self.and()?;
+            let expr = self.sql_assignment()?;
             condition = Some(Box::new(expr));
         }
 
@@ -775,11 +941,11 @@ impl Parser {
 
         self.consume(TokenKind::Set, "Expected set for update expression")?;
 
-        let update = Box::new(self.expression()?);
+        let update = Box::new(self.sql_assignment()?);
 
         let mut condition = None;
         if self.matches(TokenKind::Where)? {
-            condition = Some(Box::new(self.expression()?));
+            condition = Some(Box::new(self.sql_assignment()?));
         }
 
         Ok(SqlExpression::Update {
@@ -820,7 +986,7 @@ impl Parser {
 
         let mut values = vec![];
         while self.matches(TokenKind::LeftParen)? {
-            values.push(self.tuple()?);
+            values.push(self.sql_tuple()?);
 
             if !self.matches(TokenKind::Comma)? {
                 break;
@@ -870,7 +1036,7 @@ fn formatting_sql(expr: &SqlExpression) -> String {
             res.push_str(&format!(" from {}", from.name));
 
             if let Some(cond) = condition {
-                res.push_str(&format!(" where {}", formatting(cond)))
+                res.push_str(&format!(" where {}", formatting_sql(cond)))
             }
 
             if *locking {
@@ -884,10 +1050,10 @@ fn formatting_sql(expr: &SqlExpression) -> String {
             update,
             condition,
         } => {
-            let mut res = format!("update {} set {}", relation.name, formatting(update));
+            let mut res = format!("update {} set {}", relation.name, formatting_sql(update));
 
             if let Some(cond) = condition {
-                res.push_str(&format!(" where {}", formatting(cond)))
+                res.push_str(&format!(" where {}", formatting_sql(cond)))
             }
 
             res
@@ -911,7 +1077,7 @@ fn formatting_sql(expr: &SqlExpression) -> String {
 
             let mut iter = values.iter().peekable();
             while let Some(value) = iter.next() {
-                res.push_str(&formatting(value));
+                res.push_str(&formatting_sql(value));
                 if iter.peek().is_some() {
                     res.push_str(", ");
                 }
@@ -919,9 +1085,42 @@ fn formatting_sql(expr: &SqlExpression) -> String {
 
             res
         }
-        SqlExpression::Binary { .. } => panic!(),
-        SqlExpression::Assignment(_, _) => panic!(),
-        SqlExpression::Integer(_) => panic!(),
+        SqlExpression::Binary {
+            left,
+            operator,
+            right,
+        } => {
+            let op = match operator {
+                SqlOperator::Add => "+",
+                SqlOperator::Multiply => "*",
+                SqlOperator::Rem => "%",
+                SqlOperator::Equal => "=",
+                SqlOperator::LessEqual => "<=",
+                SqlOperator::Less => "<",
+                SqlOperator::And => "and",
+            };
+            format!("{} {} {}", formatting_sql(left), op, formatting_sql(right))
+        }
+        SqlExpression::Assignment(var, expr) => format!("{} := {}", var.name, formatting_sql(expr)),
+        SqlExpression::Integer(i) => i.to_string(),
+        SqlExpression::Tuple(values) => {
+            let mut res = "(".to_string();
+
+            let mut iter = values.iter().peekable();
+            while let Some(value) = iter.next() {
+                res.push_str(&formatting_sql(value));
+                if iter.peek().is_some() {
+                    res.push_str(", ");
+                }
+            }
+
+            res.push(')');
+
+            res
+        }
+        SqlExpression::Var(v) => v.name.clone(),
+        SqlExpression::UpVariable(v) => format!("${}", v.name),
+        SqlExpression::Value(_) => panic!("no value formatting"),
     }
 }
 
@@ -983,7 +1182,9 @@ fn formatting(expr: &Expression) -> String {
             res
         }
         Expression::Value(v) => v.to_string(),
-        Expression::Member { call_site, member } => format!("{}.{}", formatting(call_site), member.name),
+        Expression::Member { call_site, member } => {
+            format!("{}.{}", formatting(call_site), member.name)
+        }
     }
 }
 
@@ -1003,70 +1204,120 @@ pub fn format_statement(stmt: &Statement) -> String {
 
 #[cfg(test)]
 mod test {
-    use crate::parser::{Expression, Operator, Parser, Statement, Variable};
+    use crate::parser::{Expression, Parser, SqlExpression, SqlOperator, Statement, Variable};
+
+    // #[test]
+    // fn parse_select_is_value() {
+    //     let mut parser =
+    //         Parser::new("eventually<select age from users where id = 1 is 11>\n".to_string());
+    //     parser.advance().unwrap();
+    //
+    //     let mut statements = vec![];
+    //     parser.statement(&mut statements).unwrap();
+    //     assert_eq!(
+    //         Statement::Eventually(Expression::Binary {
+    //             left: Box::new(Expression::Select {
+    //                 columns: vec![Variable {
+    //                     name: "age".to_string()
+    //                 }],
+    //                 from: Variable {
+    //                     name: "users".to_string()
+    //                 },
+    //                 condition: Some(Box::new(Expression::Binary {
+    //                     left: Box::new(Expression::Var(Variable {
+    //                         name: "id".to_string()
+    //                     })),
+    //                     operator: Operator::Equal,
+    //                     right: Box::new(Expression::Integer(1)),
+    //                 })),
+    //                 locking: false,
+    //             }),
+    //             operator: Operator::Is,
+    //             right: Box::new(Expression::Integer(11)),
+    //         }),
+    //         statements[0]
+    //     );
+    // }
+    //
+    // #[test]
+    // fn parse_select_in_value() {
+    //     let mut parser =
+    //         Parser::new("eventually<select age from users where id = 1 in {11}>\n".to_string());
+    //     parser.advance().unwrap();
+    //
+    //     let mut statements = vec![];
+    //     parser.statement(&mut statements).unwrap();
+    //     assert_eq!(
+    //         Statement::Eventually(Expression::Binary {
+    //             left: Box::new(Expression::Select {
+    //                 columns: vec![Variable {
+    //                     name: "age".to_string()
+    //                 }],
+    //                 from: Variable {
+    //                     name: "users".to_string()
+    //                 },
+    //                 condition: Some(Box::new(Expression::Binary {
+    //                     left: Box::new(Expression::Var(Variable {
+    //                         name: "id".to_string()
+    //                     })),
+    //                     operator: Operator::Equal,
+    //                     right: Box::new(Expression::Integer(1)),
+    //                 })),
+    //                 locking: false,
+    //             }),
+    //             operator: Operator::Included,
+    //             right: Box::new(Expression::Set(vec![Expression::Integer(11)])),
+    //         }),
+    //         statements[0]
+    //     );
+    // }
 
     #[test]
-    fn parse_select_is_value() {
-        let mut parser =
-            Parser::new("eventually<select age from users where id = 1 is 11>\n".to_string());
-        parser.advance().unwrap();
-
-        let mut statements = vec![];
-        parser.statement(&mut statements).unwrap();
-        assert_eq!(
-            Statement::Eventually(Expression::Binary {
-                left: Box::new(Expression::Select {
-                    columns: vec![Variable {
-                        name: "age".to_string()
-                    }],
-                    from: Variable {
-                        name: "users".to_string()
-                    },
-                    condition: Some(Box::new(Expression::Binary {
-                        left: Box::new(Expression::Var(Variable {
-                            name: "id".to_string()
-                        })),
-                        operator: Operator::Equal,
-                        right: Box::new(Expression::Integer(1)),
-                    })),
-                    locking: false,
-                }),
-                operator: Operator::Is,
-                right: Box::new(Expression::Integer(11)),
-            }),
-            statements[0]
+    fn parse_sql_query() {
+        let mut parser = Parser::new(
+            "`update users set age := $t1_age + 1 where id = 1 and age = $t1_age`\n".to_string(),
         );
-    }
-
-    #[test]
-    fn parse_select_in_value() {
-        let mut parser =
-            Parser::new("eventually<select age from users where id = 1 in {11}>\n".to_string());
         parser.advance().unwrap();
 
         let mut statements = vec![];
         parser.statement(&mut statements).unwrap();
         assert_eq!(
-            Statement::Eventually(Expression::Binary {
-                left: Box::new(Expression::Select {
-                    columns: vec![Variable {
+            Statement::Expression(Expression::Sql(SqlExpression::Update {
+                relation: Variable {
+                    name: "users".to_string()
+                },
+                update: Box::new(SqlExpression::Assignment(
+                    Variable {
                         name: "age".to_string()
-                    }],
-                    from: Variable {
-                        name: "users".to_string()
                     },
-                    condition: Some(Box::new(Expression::Binary {
-                        left: Box::new(Expression::Var(Variable {
+                    Box::new(SqlExpression::Binary {
+                        left: Box::new(SqlExpression::UpVariable(Variable {
+                            name: "t1_age".to_string()
+                        })),
+                        operator: SqlOperator::Add,
+                        right: Box::new(SqlExpression::Integer(1)),
+                    })
+                )),
+                condition: Some(Box::new(SqlExpression::Binary {
+                    left: Box::new(SqlExpression::Binary {
+                        left: Box::new(SqlExpression::Var(Variable {
                             name: "id".to_string()
                         })),
-                        operator: Operator::Equal,
-                        right: Box::new(Expression::Integer(1)),
-                    })),
-                    locking: false,
-                }),
-                operator: Operator::Included,
-                right: Box::new(Expression::Set(vec![Expression::Integer(11)])),
-            }),
+                        operator: SqlOperator::Equal,
+                        right: Box::new(SqlExpression::Integer(1)),
+                    }),
+                    operator: SqlOperator::And,
+                    right: Box::new(SqlExpression::Binary {
+                        left: Box::new(SqlExpression::Var(Variable {
+                            name: "age".to_string()
+                        })),
+                        operator: SqlOperator::Equal,
+                        right: Box::new(SqlExpression::UpVariable(Variable {
+                            name: "t1_age".to_string()
+                        })),
+                    }),
+                })),
+            })),
             statements[0]
         );
     }

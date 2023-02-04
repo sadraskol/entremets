@@ -57,6 +57,8 @@ pub enum TokenKind {
     LeftArrow,
     // `
     Backtick,
+    // $
+    Dollar,
     // <=
     LessEqual,
     // (
@@ -214,6 +216,7 @@ impl Scanner {
             match c {
                 '\n' => self.make_token(TokenKind::Newline),
                 '`' => self.make_token(TokenKind::Backtick),
+                '$' => self.make_token(TokenKind::Dollar),
                 '(' => self.make_token(TokenKind::LeftParen),
                 ')' => self.make_token(TokenKind::RightParen),
                 '[' => self.make_token(TokenKind::LeftBracket),
@@ -249,7 +252,9 @@ impl Scanner {
     }
 
     fn identifier(&mut self) -> Result<Token, ScannerError> {
-        while !self.is_at_end() && (self.peek().is_alphabetic() || self.peek() == '_' || self.peek().is_numeric()) {
+        while !self.is_at_end()
+            && (self.peek().is_alphabetic() || self.peek() == '_' || self.peek().is_numeric())
+        {
             self.advance();
         }
         self.make_token(self.identifier_type())

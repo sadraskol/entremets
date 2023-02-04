@@ -1,20 +1,20 @@
 init do
-    insert into users (id, age) values (1, 10)
+    `insert into users (id, age) values (1, 10)`
 end
 
 process do
     transaction tx1 read_committed do
-        let first := select age from users where age = 30
+        let first := `select age from users where age = 30`
         latch
         latch
-        let second := select age from users where age % 3 = 0
+        let second := `select age from users where age % 3 = 0`
     end
 end
 
 process do
     transaction tx2 read_committed do
         latch
-        insert into users(id, age) values (3, 30)
+        `insert into users(id, age) values (3, 30)`
     end
 end
 

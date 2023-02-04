@@ -1,19 +1,19 @@
 init do
-    insert into users (id, age) values (1, 10), (2, 20)
+    `insert into users (id, age) values (1, 10), (2, 20)`
 end
 
 process do
     transaction tx1 read_committed do
-        update users set age := 11 where id = 1
-        let t1_age := select age from users where id = 2
+        `update users set age := 11 where id = 1`
+        let t1_age := `select age from users where id = 2`
         latch
     end
 end
 
 process do
     transaction tx2 read_committed do
-        update users set age := 22 where id = 2
-        let t2_age := select age from users where id = 1
+        `update users set age := 22 where id = 2`
+        let t2_age := `select age from users where id = 1`
         latch
     end
 end

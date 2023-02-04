@@ -1,6 +1,6 @@
 use crate::engine::Value;
-use crate::parser::{Expression, IsolationLevel, Operator, Variable};
-use crate::sql_engine::SqlEngineError::SqlTypeError;
+use crate::parser::{IsolationLevel, SqlExpression, SqlOperator, Variable};
+use crate::sql_interpreter::SqlEngineError::{SqlTypeError, UnknownVariable};
 use std::collections::HashMap;
 
 #[derive(Hash, Eq, PartialEq, Debug, Clone)]
@@ -82,9 +82,10 @@ enum SqlContext {
 
 #[derive(PartialEq, Debug, Clone)]
 pub struct SqlDatabase {
+    pub cur_tx: Option<TransactionId>,
     pub tables: HashMap<String, Vec<Row>>,
-    pub transactions: HashMap<usize, Transaction>,
-    tx: usize,
+    pub transactions: HashMap<TransactionId, Transaction>,
+    tx: TransactionId,
     sql_context: Option<SqlContext>,
 }
 
@@ -101,13 +102,21 @@ impl SqlDatabase {
     }
 }
 
-#[derive(PartialEq, Debug, Clone, Copy)]
+#[derive(PartialEq, Debug, Clone, Copy, Eq, Hash)]
 pub struct TransactionId(pub usize);
+
+impl TransactionId {
+    fn increment(&mut self) -> TransactionId {
+        self.0 += 1;
+        TransactionId(self.0)
+    }
+}
 
 #[derive(PartialEq, Debug, Clone)]
 pub enum SqlEngineError {
     RowLockedError,
-    SqlTypeError(Expression, String),
+    SqlTypeError(SqlExpression, String),
+    UnknownVariable(String),
 }
 
 type Res<T> = Result<T, SqlEngineError>;
@@ -116,186 +125,128 @@ type Unit = Res<()>;
 impl SqlDatabase {
     pub fn new() -> SqlDatabase {
         SqlDatabase {
+            cur_tx: None,
             tables: Default::default(),
             transactions: Default::default(),
-            tx: 0,
+            tx: TransactionId(0),
             sql_context: None,
         }
     }
 
     pub fn open_transaction(&mut self, _isolation: IsolationLevel) -> TransactionId {
-        self.tx += 1;
-        self.transactions.insert(self.tx, Transaction::new());
+        let new_tx = self.tx.increment();
+        self.transactions.insert(new_tx, Transaction::new());
 
-        TransactionId(self.tx)
+        new_tx
     }
 
-    fn interpret(&mut self, expression: &Expression) -> Res<Value> {
-        match expression {
-            Expression::Assignment(variable, expr) => {
-                let value = self.interpret(expr)?;
-                self.assign(variable.name.clone(), value)?;
-                Ok(Value::Nil)
-            }
-            Expression::Binary {
+    pub fn interpret(&mut self, expr: &SqlExpression) -> Res<Value> {
+        match expr {
+            SqlExpression::Select {
+                columns,
+                from,
+                condition,
+                locking,
+            } => self.interpret_select(columns, from, condition, *locking),
+            SqlExpression::Update {
+                relation,
+                update,
+                condition,
+            } => self.interpret_update(relation, update, condition),
+            SqlExpression::Insert {
+                relation,
+                columns,
+                values,
+            } => self.interpret_insert(relation, columns, values),
+            SqlExpression::Binary {
                 left,
                 operator,
                 right,
             } => self.interpret_binary(left, operator, right),
-            Expression::Var(variable) => {
-                if let Some(sql_context) = &self.sql_context {
-                    match sql_context {
-                        SqlContext::Where { row, .. } => {
-                            Ok(row.0.get(&variable.name).unwrap().clone())
-                        }
-                        _ => panic!(),
-                    }
-                } else {
-                    panic!()
-                }
+            SqlExpression::Assignment(variable, expr) => {
+                let value = self.interpret(expr)?;
+                self.assign(variable.name.clone(), value)?;
+                Ok(Value::Nil)
             }
-            Expression::Integer(i) => Ok(Value::Integer(*i)),
-            Expression::Set(members) => {
+            SqlExpression::Integer(i) => Ok(Value::Integer(*i)),
+            SqlExpression::Tuple(values) => {
                 let mut res = vec![];
-                for member in members {
-                    res.push(self.interpret(member)?)
-                }
-                Ok(Value::Set(res))
-            }
-            Expression::Tuple(members) => {
-                let mut res = vec![];
-                for member in members {
-                    res.push(self.interpret(member)?)
+                for value in values {
+                    res.push(self.interpret(value)?);
                 }
                 Ok(Value::Tuple(res))
             }
-            Expression::Value(v) => Ok(v.clone()),
-            Expression::Member { .. } => panic!(),
-            Expression::Sql(_) => panic!(),
+            SqlExpression::Var(var) => {
+                if let Some(SqlContext::Where { row, .. }) = &self.sql_context {
+                    Ok(row.0.get(&var.name).unwrap().clone())
+                } else {
+                    Err(UnknownVariable(var.name.clone()))
+                }
+            }
+            SqlExpression::UpVariable(_) => panic!("UpVariable should not be interpreted directly"),
+            SqlExpression::Value(value) => Ok(value.clone()),
         }
     }
 
     fn interpret_binary(
         &mut self,
-        left: &Expression,
-        operator: &Operator,
-        right: &Expression,
+        left: &SqlExpression,
+        operator: &SqlOperator,
+        right: &SqlExpression,
     ) -> Res<Value> {
         match operator {
-            Operator::Add => {
+            SqlOperator::Add => {
                 let left = self.assert_integer(left)?;
                 let right = self.assert_integer(right)?;
                 Ok(Value::Integer(left + right))
             }
-            Operator::Multiply => {
+            SqlOperator::Multiply => {
                 let left = self.assert_integer(left)?;
                 let right = self.assert_integer(right)?;
                 Ok(Value::Integer(left * right))
             }
-            Operator::Rem => {
+            SqlOperator::Rem => {
                 let left = self.assert_integer(left)?;
                 let right = self.assert_integer(right)?;
                 Ok(Value::Integer(left % right))
             }
-            Operator::Equal => {
+            SqlOperator::Equal => {
                 let left = self.interpret(left)?;
                 let right = self.interpret(right)?;
                 Ok(Value::Bool(left == right))
             }
-            Operator::Is => {
-                let left = self.interpret(left)?;
-                let right = self.interpret(right)?;
-                Ok(Value::Bool(left == right))
-            }
-            Operator::LessEqual => {
+            SqlOperator::LessEqual => {
                 let left = self.assert_integer(left)?;
                 let right = self.assert_integer(right)?;
                 Ok(Value::Bool(left <= right))
             }
-            Operator::Less => {
+            SqlOperator::Less => {
                 let left = self.assert_integer(left)?;
                 let right = self.assert_integer(right)?;
                 Ok(Value::Bool(left < right))
             }
-            Operator::Included => {
-                let left = self.interpret(left)?;
-                let right = if let Value::Set(right) = self.interpret(right)? {
-                    right
-                } else {
-                    todo!()
-                };
-                Ok(Value::Bool(right.contains(&left)))
-            }
-            Operator::And => {
-                let left = if let Value::Bool(left) = self.interpret(left)? {
-                    left
-                } else {
-                    todo!()
-                };
-                let right = if let Value::Bool(right) = self.interpret(right)? {
-                    right
-                } else {
-                    todo!()
-                };
+            SqlOperator::And => {
+                let left = self.assert_bool(left)?;
+                let right = self.assert_bool(right)?;
                 Ok(Value::Bool(left && right))
             }
-            Operator::Or => {
-                let left = if let Value::Bool(left) = self.interpret(left)? {
-                    left
-                } else {
-                    todo!()
-                };
-                let right = if let Value::Bool(right) = self.interpret(right)? {
-                    right
-                } else {
-                    todo!()
-                };
-                Ok(Value::Bool(left || right))
-            }
         }
     }
 
-    fn assert_integer(&mut self, expr: &Expression) -> Res<i16> {
-        if let Value::Integer(value) = self.interpret(expr)? {
-            Ok(value)
-        } else {
-            Err(SqlTypeError(expr.clone(), "integer".to_string()))
-        }
-    }
-
-    fn assert_set(&mut self, expr: &Expression) -> Res<Vec<Value>> {
-        if let Value::Set(value) = self.interpret(expr)? {
-            Ok(value)
-        } else {
-            Err(SqlTypeError(expr.clone(), "set".to_string()))
-        }
-    }
-
-    fn assert_bool(&mut self, expr: &Expression) -> Res<bool> {
-        if let Value::Bool(value) = self.interpret(expr)? {
-            Ok(value)
-        } else {
-            Err(SqlTypeError(expr.clone(), "bool".to_string()))
-        }
-    }
-
-    fn assert_tuple(&mut self, expr: &Expression) -> Res<Vec<Value>> {
-        if let Value::Tuple(value) = self.interpret(expr)? {
-            Ok(value)
-        } else {
-            Err(SqlTypeError(expr.clone(), "tuple".to_string()))
-        }
-    }
-
-    pub fn insert_in_table(
+    fn interpret_insert(
         &mut self,
-        tx: &Option<TransactionId>,
-        table: &str,
-        tuples: Vec<Vec<Value>>,
+        relation: &Variable,
         columns: &[Variable],
-    ) {
+        exprs: &[SqlExpression],
+    ) -> Res<Value> {
+        let mut values = vec![];
+        for expr in exprs {
+            values.push(self.assert_tuple(expr)?)
+        }
+
+        let table = &relation.name;
         let mut rows = vec![];
-        for tuple in tuples {
+        for tuple in values {
             let mut new_row = HashMap::new();
             for (i, col) in columns.iter().enumerate() {
                 new_row.insert(col.name.clone(), tuple[i].clone());
@@ -303,8 +254,8 @@ impl SqlDatabase {
             rows.push(Row(new_row))
         }
 
-        if let Some(tx) = tx {
-            let transaction = self.transactions.get_mut(&tx.0).unwrap();
+        if let Some(tx) = self.cur_tx {
+            let transaction = self.transactions.get_mut(&tx).unwrap();
             transaction
                 .changes
                 .push(Changes::Insert(table.to_string(), rows));
@@ -314,16 +265,18 @@ impl SqlDatabase {
                 table.push(row);
             }
         }
+
+        Ok(Value::Nil)
     }
 
-    pub fn update_in_table(
+    fn interpret_update(
         &mut self,
-        tx: &Option<TransactionId>,
-        table: &String,
-        update: &Expression,
-        condition: &Option<Box<Expression>>,
-    ) -> Unit {
-        let rows = self.rows(tx, table);
+        relation: &Variable,
+        update: &SqlExpression,
+        condition: &Option<Box<SqlExpression>>,
+    ) -> Res<Value> {
+        let table = &relation.name;
+        let rows = self.rows(&self.cur_tx, table);
 
         for row in rows {
             if let Some(cond) = condition {
@@ -333,7 +286,7 @@ impl SqlDatabase {
                 });
                 if self.interpret(cond)? == Value::Bool(true) {
                     self.sql_context = Some(SqlContext::Update {
-                        tx: *tx,
+                        tx: self.cur_tx,
                         row: row.clone(),
                         table: table.clone(),
                     });
@@ -341,7 +294,7 @@ impl SqlDatabase {
                 }
             } else {
                 self.sql_context = Some(SqlContext::Update {
-                    tx: *tx,
+                    tx: self.cur_tx,
                     row: row.clone(),
                     table: table.clone(),
                 });
@@ -349,36 +302,36 @@ impl SqlDatabase {
             }
             self.sql_context = None;
         }
-        Ok(())
+
+        Ok(Value::Nil)
     }
 
-    pub fn select_in_table(
+    fn interpret_select(
         &mut self,
-        tx: &Option<TransactionId>,
         columns: &[Variable],
-        from: &String,
-        condition: &Option<Box<Expression>>,
+        from: &Variable,
+        condition: &Option<Box<SqlExpression>>,
         locking: bool,
-    ) -> Res<Vec<Value>> {
+    ) -> Res<Value> {
         let columns: Vec<_> = columns.iter().map(|v| v.name.clone()).collect();
-        let rows = self.rows(tx, from);
+        let rows = self.rows(&self.cur_tx, &from.name);
 
         let mut res = vec![];
         for row in &rows {
             if let Some(cond) = condition {
                 self.sql_context = Some(SqlContext::Where {
                     row: row.clone(),
-                    table: from.clone(),
+                    table: from.name.clone(),
                 });
                 if locking {
                     if self.is_locked(
-                        &tx.unwrap_or(TransactionId(usize::MAX)),
+                        &self.cur_tx.unwrap_or(TransactionId(usize::MAX)),
                         row,
                         LockMode::ForUpdate,
                     ) {
                         return Err(SqlEngineError::RowLockedError);
-                    } else if let Some(tx) = tx {
-                        let transaction = self.transactions.get_mut(&tx.0).unwrap();
+                    } else if let Some(tx) = &self.cur_tx {
+                        let transaction = self.transactions.get_mut(tx).unwrap();
                         transaction.locks.push(Lock {
                             row: row.clone(),
                             mode: LockMode::ForUpdate,
@@ -394,14 +347,57 @@ impl SqlDatabase {
             }
         }
 
-        Ok(res)
+        if res.len() == 1 {
+            let row = if let Value::Tuple(x) = &res[0] {
+                x
+            } else {
+                panic!("expected to be a tuple")
+            };
+            if row.len() == 1 {
+                return Ok(row[0].clone());
+            }
+        }
+
+        Ok(Value::Set(res))
+    }
+
+    fn assert_integer(&mut self, expr: &SqlExpression) -> Res<i16> {
+        if let Value::Integer(value) = self.interpret(expr)? {
+            Ok(value)
+        } else {
+            Err(SqlTypeError(expr.clone(), "integer".to_string()))
+        }
+    }
+
+    fn assert_set(&mut self, expr: &SqlExpression) -> Res<Vec<Value>> {
+        if let Value::Set(value) = self.interpret(expr)? {
+            Ok(value)
+        } else {
+            Err(SqlTypeError(expr.clone(), "set".to_string()))
+        }
+    }
+
+    fn assert_bool(&mut self, expr: &SqlExpression) -> Res<bool> {
+        if let Value::Bool(value) = self.interpret(expr)? {
+            Ok(value)
+        } else {
+            Err(SqlTypeError(expr.clone(), "bool".to_string()))
+        }
+    }
+
+    fn assert_tuple(&mut self, expr: &SqlExpression) -> Res<Vec<Value>> {
+        if let Value::Tuple(value) = self.interpret(expr)? {
+            Ok(value)
+        } else {
+            Err(SqlTypeError(expr.clone(), "tuple".to_string()))
+        }
     }
 
     fn rows(&self, tx: &Option<TransactionId>, table: &String) -> Vec<Row> {
         let mut rows = self.tables.get(table).cloned().unwrap_or_default();
 
         if let Some(tx) = tx {
-            let transaction = self.transactions.get(&tx.0).unwrap();
+            let transaction = self.transactions.get(tx).unwrap();
             for changes in &transaction.changes {
                 match changes {
                     Changes::Insert(insert_table, insert_rows) => {
@@ -417,7 +413,7 @@ impl SqlDatabase {
     }
 
     pub fn commit(&mut self, tx: &TransactionId) {
-        let x = self.transactions.remove(&tx.0).unwrap();
+        let x = self.transactions.remove(tx).unwrap();
         for change in x.changes {
             match change {
                 Changes::Insert(table, rows) => {
@@ -437,7 +433,7 @@ impl SqlDatabase {
     }
 
     pub fn abort(&mut self, tx: &TransactionId) {
-        self.transactions.remove(&tx.0).unwrap();
+        self.transactions.remove(tx).unwrap();
     }
 
     fn assign(&mut self, name: String, value: Value) -> Unit {
@@ -448,7 +444,7 @@ impl SqlDatabase {
                         if self.is_locked(tx, row, LockMode::ForUpdate) {
                             return Err(SqlEngineError::RowLockedError);
                         } else {
-                            let transaction = self.transactions.get_mut(&tx.0).unwrap();
+                            let transaction = self.transactions.get_mut(tx).unwrap();
                             transaction.locks.push(Lock {
                                 row: row.clone(),
                                 mode: LockMode::ForUpdate,
@@ -478,7 +474,7 @@ impl SqlDatabase {
 
     fn is_locked(&self, tx: &TransactionId, row: &Row, mode: LockMode) -> bool {
         for (id, t) in &self.transactions {
-            if *id != tx.0 && t.locks.iter().any(|l| l.mode == mode && &l.row == row) {
+            if id != tx && t.locks.iter().any(|l| l.mode == mode && &l.row == row) {
                 return true;
             }
         }

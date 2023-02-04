@@ -1,19 +1,19 @@
 init do
-    insert into users (id, age) values (1, 10)
+    `insert into users (id, age) values (1, 10)`
 end
 
 process do
     transaction tx1 read_committed do
-        let t1_age := select age from users where id = 1 for update
-        update users set age := t1_age + 1 where id = 1
+        let t1_age := `select age from users where id = 1 for update`
+        `update users set age := $t1_age + 1 where id = 1`
     end
 end
 
 process do
     transaction tx2 read_committed do
-        let t2_age := select age from users where id = 1 for update
-        update users set age := t2_age * 2 where id = 1
+        let t2_age := `select age from users where id = 1 for update`
+        `update users set age := $t2_age * 2 where id = 1`
     end
 end
 
-property = eventually<select age from users where id = 1 in {21, 22}>
+property = eventually<`select age from users where id = 1` in {21, 22}>

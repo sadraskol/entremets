@@ -1,6 +1,6 @@
 use crate::interpreter::{Interpreter, InterpreterError};
 use crate::parser::{Mets, Statement};
-use crate::sql_engine::{HashableRow, SqlDatabase, SqlEngineError, TransactionId};
+use crate::sql_interpreter::{HashableRow, SqlDatabase, SqlEngineError, TransactionId};
 use std::collections::{HashMap, HashSet, VecDeque};
 
 #[derive(Hash, Eq, PartialEq, Debug, Clone)]
@@ -126,6 +126,7 @@ pub struct Report {
 
 #[derive(Debug)]
 pub enum CheckerError {
+    RuntimeError(String),
     InterpreterError(InterpreterError),
 }
 
@@ -196,11 +197,23 @@ fn private_model_checker(mets: &Mets) -> Res<Report> {
         for (idx, code) in mets.processes.iter().enumerate() {
             if state.state[idx] == ProcessState::Running {
                 interpreter.idx = idx;
-                if let Err(InterpreterError::SqlEngineError(SqlEngineError::RowLockedError)) =
-                    interpreter.statement(&code[state.pc[idx]])
-                {
-                    interpreter.reset();
-                    continue;
+                match interpreter.statement(&code[state.pc[idx]]) {
+                    Ok(_) => {}
+                    Err(err) => match err {
+                        InterpreterError::Unexpected(x) => {
+                            return Err(CheckerError::RuntimeError(format!("{x:?}")));
+                        }
+                        InterpreterError::TypeError(x, y) => {
+                            return Err(CheckerError::RuntimeError(format!("{x:?} {y:?}")));
+                        }
+                        InterpreterError::SqlEngineError(SqlEngineError::RowLockedError) => {
+                            interpreter.reset();
+                            continue;
+                        }
+                        InterpreterError::SqlEngineError(x) => {
+                            return Err(CheckerError::RuntimeError(format!("{x:?}")));
+                        }
+                    },
                 }
                 let mut new_state = interpreter.reset();
                 new_state.pc[idx] += 1;

@@ -10,17 +10,17 @@ Let's write the first code:
     :name: no-transaction.mets
 
     init do
-      insert into users(id, age) values (1, 10)
+      `insert into users(id, age) values (1, 10)`
     end
 
     process do
-      let age_1 := select age from users where id = 1
-      update users set age := age_1 * 2
+      let age_1 := `select age from users where id = 1`
+      `update users set age := age_1 * 2`
     end
 
     process do
-      let age_2 := select age from users where id = 1
-      update users set age := age_2 + 1
+      let age_2 := `select age from users where id = 1`
+      `update users set age := age_2 + 1`
     end
 
 Run the specification with :code:`cargo run no-transaction.mets`.
@@ -40,20 +40,20 @@ Let's add a simple property:
     :name: no-transaction.mets
 
     init do
-      insert into users(id, age) values (1, 10)
+      `insert into users(id, age) values (1, 10)`
     end
 
     process do
-      let age_1 := select age from users where id = 1
-      update users set age := age_1 * 2
+      let age_1 := `select age from users where id = 1`
+      `update users set age := age_1 * 2`
     end
 
     process do
-      let age_2 := select age from users where id = 1
-      update users set age := age_2 + 1
+      let age_2 := `select age from users where id = 1`
+      `update users set age := age_2 + 1`
     end
 
-    property = eventually<select age from users where id = 1 in {21, 22}>
+    property = eventually<`select age from users where id = 1` in {21, 22}>
 
 Either the addition goes first, then the multiplication.
 So the :code:`age` should be 21 or 22.
@@ -88,24 +88,24 @@ The first step to fix this in SQL is to use a transaction:
     :name: transaction.mets
 
     init do
-      insert into users(id, age) values (1, 10)
+      `insert into users(id, age) values (1, 10)`
     end
 
     process do
       transaction tx1 read_committed do
-        let age_1 := select age from users where id = 1
-        update users set age := age_1 * 2
+        let age_1 := `select age from users where id = 1`
+        `update users set age := age_1 * 2`
       end
     end
 
     process do
       transaction tx2 read_committed do
-        let age_2 := select age from users where id = 1
-        update users set age := age_2 + 1
+        let age_2 := `select age from users where id = 1`
+        `update users set age := age_2 + 1`
       end
     end
 
-    property = eventually<select age from users where id = 1 in {21, 22}>
+    property = eventually<`select age from users where id = 1` in {21, 22}>
 
 But using transaction is not enough.
 Entremets can also tell that there's an issue:
@@ -150,24 +150,24 @@ SQL offers :code:`select for update` to achieve this:
     :name: no-lost-updates.mets
 
     init do
-      insert into users(id, age) values (1, 10)
+      `insert into users(id, age) values (1, 10)`
     end
 
     process do
       transaction tx1 read_committed do
-        let age_1 := select age from users where id = 1 for update
-        update users set age := age_1 * 2
+        let age_1 := `select age from users where id = 1 for update`
+        `update users set age := age_1 * 2
       end
     end
 
     process do
       transaction tx2 read_committed do
-        let age_2 := select age from users where id = 1 for update
-        update users set age := age_2 + 1
+        let age_2 := `select age from users where id = 1 for update`
+        `update users set age := age_2 + 1`
       end
     end
 
-    property = eventually<select age from users where id = 1 in {21, 22}>
+    property = eventually<`select age from users where id = 1` in {21, 22}>
 
 And entremets tells us it cannot find issues with this code:
 

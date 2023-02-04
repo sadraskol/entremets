@@ -1,20 +1,20 @@
 init do
-    insert into users (id, age) values (1, 10)
+    `insert into users (id, age) values (1, 10)`
 end
 
 process do
     transaction tx1 read_committed do
-        update users set age := 101 where id = 1
+        `update users set age := 101 where id = 1`
         latch
     end
 end
 
 process do
     transaction tx2 read_committed do
-        let age := select age from users where id = 1
-        update users set age := 11 where id = 1
+        let age := `select age from users where id = 1`
+        `update users set age := 11 where id = 1`
     end
 end
 
 property = never[age = 101]
-property = eventually<select age from users where id = 1 is 11>
+property = eventually<`select age from users where id = 1` is 11>

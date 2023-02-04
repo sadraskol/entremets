@@ -1,12 +1,12 @@
 init do
-    insert into users (id, age) values (1, 10), (2, 20)
+    `insert into users (id, age) values (1, 10), (2, 20)`
 end
 
 process do
     transaction tx1 read_committed do
         latch
-        update users set age := 11 where id = 1
-        update users set age := 19 where id = 2
+        `update users set age := 11 where id = 1`
+        `update users set age := 19 where id = 2`
         latch
     end
 end
@@ -15,9 +15,9 @@ process do
     transaction tx2 read_committed do
         latch
         latch
-        update users set age := 12 where id = 1
+        `update users set age := 12 where id = 1`
         latch
-        update users set age := 18 where id = 2
+        `update users set age := 18 where id = 2`
         latch
     end
 end
@@ -27,12 +27,12 @@ process do
         latch
         latch
         latch
-        let t1_1_age := select age from users where id = 1
-        let t2_1_age := select age from users where id = 2
+        let t1_1_age := `select age from users where id = 1`
+        let t2_1_age := `select age from users where id = 2`
         latch
         latch
-        let t1_2_age := select age from users where id = 1
-        let t2_2_age := select age from users where id = 2
+        let t1_2_age := `select age from users where id = 1`
+        let t2_2_age := `select age from users where id = 2`
     end
 end
 
