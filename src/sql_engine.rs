@@ -170,9 +170,8 @@ impl SqlDatabase {
                 Ok(Value::Tuple(res))
             }
             Expression::Value(v) => Ok(v.clone()),
-            Expression::Select { .. } => panic!(),
-            Expression::Update { .. } => panic!(),
-            Expression::Insert { .. } => panic!(),
+            Expression::Member { .. } => panic!(),
+            Expression::Sql(_) => panic!(),
         }
     }
 
@@ -239,6 +238,19 @@ impl SqlDatabase {
                     todo!()
                 };
                 Ok(Value::Bool(left && right))
+            }
+            Operator::Or => {
+                let left = if let Value::Bool(left) = self.interpret(left)? {
+                    left
+                } else {
+                    todo!()
+                };
+                let right = if let Value::Bool(right) = self.interpret(right)? {
+                    right
+                } else {
+                    todo!()
+                };
+                Ok(Value::Bool(left || right))
             }
         }
     }

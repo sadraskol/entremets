@@ -43,6 +43,8 @@ pub enum TokenKind {
     ColonEqual,
     // ,
     Comma,
+    // .
+    Dot,
     // *
     Star,
     // +
@@ -53,6 +55,8 @@ pub enum TokenKind {
     Equal,
     // <-
     LeftArrow,
+    // `
+    Backtick,
     // <=
     LessEqual,
     // (
@@ -109,6 +113,8 @@ pub enum TokenKind {
     In,
     // and
     And,
+    // or
+    Or,
     // always
     Always,
     // never,
@@ -170,6 +176,7 @@ pub struct ScannerError {
     position: Position,
 }
 
+#[derive(Clone)]
 pub struct Scanner {
     source: String,
     start: Cursor,
@@ -206,6 +213,7 @@ impl Scanner {
 
             match c {
                 '\n' => self.make_token(TokenKind::Newline),
+                '`' => self.make_token(TokenKind::Backtick),
                 '(' => self.make_token(TokenKind::LeftParen),
                 ')' => self.make_token(TokenKind::RightParen),
                 '[' => self.make_token(TokenKind::LeftBracket),
@@ -217,6 +225,7 @@ impl Scanner {
                 '+' => self.make_token(TokenKind::Plus),
                 '%' => self.make_token(TokenKind::Percent),
                 '*' => self.make_token(TokenKind::Star),
+                '.' => self.make_token(TokenKind::Dot),
                 ':' => {
                     if self.matches('=') {
                         self.make_token(TokenKind::ColonEqual)
@@ -315,6 +324,7 @@ impl Scanner {
                     TokenKind::Identifier
                 }
             }
+            'o' => self.check_keyword(1, "r", TokenKind::Or),
             'p' => {
                 if self.current.index - self.start.index > 6 {
                     if self

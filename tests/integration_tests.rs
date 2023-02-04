@@ -5,6 +5,7 @@ const FILES: &[&str] = &[
     "intermediate_reads",
     "lost_update",
     "not_lost_update",
+    "optimistic_lost_update",
     "observed_transaction_vanishes",
     "predicate_many_preceders",
     "write_cycles",

@@ -1,7 +1,37 @@
 use crate::engine::{ProcessState, PropertyCheck, State, Value};
 use crate::interpreter::InterpreterError::{TypeError, Unexpected};
-use crate::parser::{Expression, Operator, Statement, Variable};
+use crate::parser::{Expression, Operator, SqlExpression, SqlOperator, Statement, Variable};
 use crate::sql_engine::SqlEngineError;
+
+enum InterpretKind<'a> {
+    Nature(&'a Expression),
+    Sql(&'a SqlExpression),
+}
+
+trait Interpretable {
+    fn kind(&self) -> InterpretKind;
+    fn to_expression(&self) -> Expression;
+}
+
+impl Interpretable for Expression {
+    fn kind(&self) -> InterpretKind {
+        InterpretKind::Nature(self)
+    }
+
+    fn to_expression(&self) -> Expression {
+        self.clone()
+    }
+}
+
+impl Interpretable for SqlExpression {
+    fn kind(&self) -> InterpretKind {
+        InterpretKind::Sql(self)
+    }
+
+    fn to_expression(&self) -> Expression {
+        Expression::Sql(self.clone())
+    }
+}
 
 #[derive(Debug)]
 pub enum InterpreterError {
@@ -87,22 +117,7 @@ impl Interpreter {
 
     fn interpret(&mut self, expression: &Expression) -> Res<Value> {
         match expression {
-            Expression::Select {
-                columns,
-                from,
-                condition,
-                locking,
-            } => self.interpret_select(columns, from, condition, *locking),
-            Expression::Update {
-                relation,
-                update,
-                condition,
-            } => self.interpret_update(relation, update, condition),
-            Expression::Insert {
-                relation,
-                columns,
-                values: exprs,
-            } => self.interpret_insert(relation, columns, exprs),
+            Expression::Sql(sql_expr) => self.interpret_sql(sql_expr),
             Expression::Assignment(variable, expr) => {
                 let value = self.interpret(expr)?;
                 let name = variable.name.clone();
@@ -136,6 +151,75 @@ impl Interpreter {
                 Ok(Value::Tuple(res))
             }
             Expression::Value(_) => panic!(),
+            Expression::Member { .. } => Ok(Value::Bool(true)),
+        }
+    }
+
+    fn interpret_sql(&mut self, expr: &SqlExpression) -> Res<Value> {
+        match expr {
+            SqlExpression::Select { columns, from, condition, locking } =>
+                self.interpret_select(columns, from, condition, *locking),
+
+            SqlExpression::Update { relation, update, condition } =>
+                self.interpret_update(relation, update, condition),
+            SqlExpression::Insert { relation, columns, values } =>
+                self.interpret_insert(relation, columns, values),
+            SqlExpression::Binary { left, operator, right } =>
+                self.interpret_sql_binary(left, operator, right),
+            SqlExpression::Assignment(var, value_expr) => {
+                let value = self.interpret_sql(value_expr)?;
+                let name = var.name.clone();
+                self.next_state.locals.insert(name, value);
+                Ok(Value::Nil)
+            }
+            SqlExpression::Integer(i) => {
+                Ok(Value::Integer(*i))
+            }
+        }
+    }
+
+    fn interpret_sql_binary(
+        &mut self,
+        left: &SqlExpression,
+        operator: &SqlOperator,
+        right: &SqlExpression,
+    ) -> Res<Value> {
+        match operator {
+            SqlOperator::Add => {
+                let left = self.assert_integer(left)?;
+                let right = self.assert_integer(right)?;
+                Ok(Value::Integer(left + right))
+            }
+            SqlOperator::Multiply => {
+                let left = self.assert_integer(left)?;
+                let right = self.assert_integer(right)?;
+                Ok(Value::Integer(left * right))
+            }
+            SqlOperator::Rem => {
+                let left = self.assert_integer(left)?;
+                let right = self.assert_integer(right)?;
+                Ok(Value::Integer(left % right))
+            }
+            SqlOperator::Equal => {
+                let left = self.interpret_sql(left)?;
+                let right = self.interpret_sql(right)?;
+                Ok(Value::Bool(left == right))
+            }
+            SqlOperator::LessEqual => {
+                let left = self.assert_integer(left)?;
+                let right = self.assert_integer(right)?;
+                Ok(Value::Bool(left <= right))
+            }
+            SqlOperator::Less => {
+                let left = self.assert_integer(left)?;
+                let right = self.assert_integer(right)?;
+                Ok(Value::Bool(left < right))
+            }
+            SqlOperator::And => {
+                let left = self.assert_bool(left)?;
+                let right = self.assert_bool(right)?;
+                Ok(Value::Bool(left && right))
+            }
         }
     }
 
@@ -206,27 +290,34 @@ impl Interpreter {
         Ok(Value::Set(res))
     }
 
-    fn assert_integer(&mut self, expr: &Expression) -> Res<i16> {
-        if let Value::Integer(value) = self.interpret(expr)? {
-            Ok(value)
-        } else {
-            Err(TypeError(expr.clone(), "integer".to_string()))
+    fn generic_interpret<T: Interpretable>(&mut self, expr: &T) -> Res<Value> {
+        match expr.kind() {
+            InterpretKind::Nature(expr) => self.interpret(expr),
+            InterpretKind::Sql(expr) => self.interpret_sql(expr),
         }
     }
 
-    fn assert_set(&mut self, expr: &Expression) -> Res<Vec<Value>> {
-        if let Value::Set(value) = self.interpret(expr)? {
+    fn assert_integer<T: Interpretable>(&mut self, expr: &T) -> Res<i16> {
+        if let Value::Integer(value) = self.generic_interpret(expr)? {
             Ok(value)
         } else {
-            Err(TypeError(expr.clone(), "set".to_string()))
+            Err(TypeError(expr.to_expression(), "integer".to_string()))
         }
     }
 
-    fn assert_bool(&mut self, expr: &Expression) -> Res<bool> {
-        if let Value::Bool(value) = self.interpret(expr)? {
+    fn assert_set<T: Interpretable>(&mut self, expr: &T) -> Res<Vec<Value>> {
+        if let Value::Set(value) = self.generic_interpret(expr)? {
             Ok(value)
         } else {
-            Err(TypeError(expr.clone(), "bool".to_string()))
+            Err(TypeError(expr.to_expression(), "set".to_string()))
+        }
+    }
+
+    fn assert_bool<T: Interpretable>(&mut self, expr: &T) -> Res<bool> {
+        if let Value::Bool(value) = self.generic_interpret(expr)? {
+            Ok(value)
+        } else {
+            Err(TypeError(expr.to_expression(), "bool".to_string()))
         }
     }
 
@@ -289,6 +380,11 @@ impl Interpreter {
                 let left = self.assert_bool(left)?;
                 let right = self.assert_bool(right)?;
                 Ok(Value::Bool(left && right))
+            }
+            Operator::Or => {
+                let left = self.assert_bool(left)?;
+                let right = self.assert_bool(right)?;
+                Ok(Value::Bool(left || right))
             }
         }
     }

@@ -1,6 +1,5 @@
 use crate::engine::Value;
-use crate::parser::Expression::{Insert, Update};
-use crate::parser::ParserError::Unexpected;
+use crate::parser::ParserErrorKind::Unexpected;
 use crate::scanner::{Position, Scanner, ScannerError, Token, TokenKind};
 use std::mem;
 use std::num::ParseIntError;
@@ -45,7 +44,7 @@ pub struct Variable {
 }
 
 #[derive(PartialEq, Debug, Clone)]
-pub enum Expression {
+pub enum SqlExpression {
     Select {
         columns: Vec<Variable>,
         from: Variable,
@@ -63,9 +62,25 @@ pub enum Expression {
         values: Vec<Expression>,
     },
     Binary {
+        left: Box<SqlExpression>,
+        operator: SqlOperator,
+        right: Box<SqlExpression>,
+    },
+    Assignment(Variable, Box<SqlExpression>),
+    Integer(i16),
+}
+
+#[derive(PartialEq, Debug, Clone)]
+pub enum Expression {
+    Sql(SqlExpression),
+    Binary {
         left: Box<Expression>,
         operator: Operator,
         right: Box<Expression>,
+    },
+    Member {
+        call_site: Box<Expression>,
+        member: Variable,
     },
     Assignment(Variable, Box<Expression>),
     Var(Variable),
@@ -88,6 +103,18 @@ pub enum Operator {
     Less,
     Included,
     And,
+    Or,
+}
+
+#[derive(PartialEq, Debug, Clone)]
+pub enum SqlOperator {
+    Add,
+    Multiply,
+    Rem,
+    Equal,
+    LessEqual,
+    Less,
+    And,
 }
 
 pub struct Parser {
@@ -99,23 +126,29 @@ pub struct Parser {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum ParserError {
+pub enum ParserErrorKind {
     ParseInt(ParseIntError),
     Scanner(ScannerError),
     Uninitialized,
     Unexpected(String),
 }
 
-impl From<ScannerError> for ParserError {
+impl From<ScannerError> for ParserErrorKind {
     fn from(value: ScannerError) -> Self {
-        ParserError::Scanner(value)
+        ParserErrorKind::Scanner(value)
     }
 }
 
-impl From<ParseIntError> for ParserError {
+impl From<ParseIntError> for ParserErrorKind {
     fn from(value: ParseIntError) -> Self {
-        ParserError::ParseInt(value)
+        ParserErrorKind::ParseInt(value)
     }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ParserError {
+    pub current: Token,
+    pub kind: ParserErrorKind,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -125,7 +158,7 @@ pub struct Mets {
     pub properties: Vec<Statement>,
 }
 
-pub type Res<T> = Result<T, ParserError>;
+pub type Res<T> = Result<T, ParserErrorKind>;
 type Unit = Res<()>;
 
 impl Parser {
@@ -143,15 +176,13 @@ impl Parser {
         }
     }
 
-    pub fn compile(mut self) -> Result<Mets, String> {
+    pub fn compile(mut self) -> Result<Mets, ParserError> {
         match self.private_compile() {
             Ok(_) => Ok(self.result),
-            Err(err) => Err(format!(
-                "Error at position {:?}: {:?}
-                previous: {:?}
-                current: {:?}",
-                self.current.position, err, self.previous, self.current
-            )),
+            Err(kind) => Err(ParserError {
+                current: self.current,
+                kind,
+            })
         }
     }
 
@@ -161,7 +192,7 @@ impl Parser {
         while !self.matches(TokenKind::Eof)? {
             self.declaration()?;
         }
-        self.consume(TokenKind::Eof, "Expect end of expression")
+        self.consume(TokenKind::Eof, "Expected end of expression")
     }
 
     fn advance(&mut self) -> Unit {
@@ -182,6 +213,24 @@ impl Parser {
         } else {
             false
         })
+    }
+
+    fn matches_forward(&mut self, kind: TokenKind) -> Res<bool> {
+        let mut clone = self.scanner.clone();
+        let mut advances = 1;
+        let mut current = self.current.clone();
+        loop {
+            let Token { kind: next_kind, .. } = current;
+            if next_kind == TokenKind::Newline {
+                advances += 1;
+            } else if next_kind == kind {
+                for _ in 0..advances { self.advance()?; }
+                return Ok(true);
+            } else {
+                return Ok(false);
+            }
+            current = clone.scan_token()?;
+        }
     }
 
     fn consume(&mut self, kind: TokenKind, expected: &str) -> Unit {
@@ -208,8 +257,8 @@ impl Parser {
     }
 
     fn init_declaration(&mut self) -> Unit {
-        self.consume(TokenKind::Do, "Expect do after init declaration")?;
-        self.consume(TokenKind::Newline, "Expect newline after init declaration")?;
+        self.consume(TokenKind::Do, "Expected do after init declaration")?;
+        self.consume(TokenKind::Newline, "Expected newline after init declaration")?;
 
         let mut statements = vec![];
         while self.current.kind != TokenKind::End {
@@ -217,16 +266,16 @@ impl Parser {
         }
         self.result.init = statements;
 
-        self.consume(TokenKind::End, "Expect end at the end of init declaration")?;
+        self.consume(TokenKind::End, "Expected end at the end of init declaration")?;
 
         self.end_line()
     }
 
     fn process_declaration(&mut self) -> Unit {
-        self.consume(TokenKind::Do, "Expect do after process declaration")?;
+        self.consume(TokenKind::Do, "Expected do after process declaration")?;
         self.consume(
             TokenKind::Newline,
-            "Expect newline after process declaration",
+            "Expected newline after process declaration",
         )?;
 
         let mut statements = vec![];
@@ -237,7 +286,7 @@ impl Parser {
 
         self.consume(
             TokenKind::End,
-            "Expect end at the end of process declaration",
+            "Expected end at the end of process declaration",
         )?;
 
         self.end_line()
@@ -245,13 +294,13 @@ impl Parser {
 
     fn end_line(&mut self) -> Unit {
         if self.current.kind != TokenKind::Eof {
-            self.consume(TokenKind::Newline, "Expect newline after declaration")?;
+            self.consume(TokenKind::Newline, "Expected newline after declaration")?;
         }
         self.skip_newlines()
     }
 
     fn property_declaration(&mut self) -> Unit {
-        self.consume(TokenKind::Equal, "Expect = after property declaration")?;
+        self.consume(TokenKind::Equal, "Expected = after property declaration")?;
 
         let mut statements = vec![];
         self.statement(&mut statements)?;
@@ -294,15 +343,15 @@ impl Parser {
     }
 
     fn transaction_statement(&mut self, writer: &mut Vec<Statement>) -> Unit {
-        let tx_name = self.parse_variable("Expect transaction name")?;
+        let tx_name = self.parse_variable("Expected transaction name")?;
         self.consume(
             TokenKind::Identifier,
-            "Expect isolation level after transaction name",
+            "Expected isolation level after transaction name",
         )?;
 
         match self.previous.lexeme.as_str() {
             "read_committed" => {
-                self.consume(TokenKind::Do, "Expect block after transaction statement")?;
+                self.consume(TokenKind::Do, "Expected block after transaction statement")?;
                 self.end_line()?;
 
                 writer.push(Statement::Begin(
@@ -315,7 +364,7 @@ impl Parser {
                     self.statement(writer)?;
                 }
 
-                self.consume(TokenKind::End, "Expect to close transaction block")?;
+                self.consume(TokenKind::End, "Expected to close transaction block")?;
 
                 if !self.manual_commit {
                     writer.push(Statement::Commit);
@@ -335,7 +384,7 @@ impl Parser {
     }
 
     fn begin_statement(&mut self, writer: &mut Vec<Statement>) -> Unit {
-        self.consume(TokenKind::Identifier, "Expect isolation level after begin")?;
+        self.consume(TokenKind::Identifier, "Expected isolation level after begin")?;
 
         match self.previous.lexeme.as_str() {
             "read_committed" => {
@@ -366,13 +415,13 @@ impl Parser {
     }
 
     fn always_statement(&mut self, writer: &mut Vec<Statement>) -> Unit {
-        self.consume(TokenKind::LeftBracket, "Expect [ to open always statement")?;
+        self.consume(TokenKind::LeftBracket, "Expected [ to open always statement")?;
 
         let expr = self.expression()?;
 
         self.consume(
             TokenKind::RightBracket,
-            "Expect ] to close always statement",
+            "Expected ] to close always statement",
         )?;
 
         writer.push(Statement::Always(expr));
@@ -380,11 +429,11 @@ impl Parser {
     }
 
     fn never_statement(&mut self, writer: &mut Vec<Statement>) -> Unit {
-        self.consume(TokenKind::LeftBracket, "Expect [ to open never statement")?;
+        self.consume(TokenKind::LeftBracket, "Expected [ to open never statement")?;
 
         let expr = self.expression()?;
 
-        self.consume(TokenKind::RightBracket, "Expect ] to close never statement")?;
+        self.consume(TokenKind::RightBracket, "Expected ] to close never statement")?;
         writer.push(Statement::Never(expr));
         Ok(())
     }
@@ -392,14 +441,15 @@ impl Parser {
     fn eventually_statement(&mut self, writer: &mut Vec<Statement>) -> Unit {
         self.consume(
             TokenKind::LeftCarret,
-            "Expect < to open eventually statement",
+            "Expected < to open eventually statement",
         )?;
 
         let expr = self.expression()?;
 
+        self.skip_newlines()?;
         self.consume(
             TokenKind::RightCarret,
-            "Expect > to close eventually statement",
+            "Expected > to close eventually statement",
         )?;
         writer.push(Statement::Eventually(expr));
         Ok(())
@@ -416,7 +466,7 @@ impl Parser {
     }
 
     fn assignment(&mut self) -> Res<Expression> {
-        let mut expr = self.included()?;
+        let mut expr = self.or()?;
 
         if self.matches(TokenKind::ColonEqual)? {
             let name = if let Expression::Var(name) = expr {
@@ -434,46 +484,61 @@ impl Parser {
         Ok(expr)
     }
 
-    fn included(&mut self) -> Res<Expression> {
-        let mut expr = self.is()?;
-
-        while self.matches(TokenKind::In)? {
-            let right = self.is()?;
-            expr = Expression::Binary {
-                left: Box::new(expr),
-                operator: Operator::Included,
-                right: Box::new(right),
-            }
-        }
-
-        Ok(expr)
-    }
-
-    fn is(&mut self) -> Res<Expression> {
+    fn or(&mut self) -> Res<Expression> {
         let mut expr = self.and()?;
 
-        while self.matches(TokenKind::Is)? {
-            let right = self.and()?;
+        if self.matches_forward(TokenKind::Or)? {
+            let right = self.or()?;
             expr = Expression::Binary {
                 left: Box::new(expr),
-                operator: Operator::Is,
+                operator: Operator::Or,
                 right: Box::new(right),
-            }
+            };
         }
 
         Ok(expr)
     }
 
     fn and(&mut self) -> Res<Expression> {
-        let mut expr = self.equality()?;
+        let mut expr = self.included()?;
 
-        while self.matches(TokenKind::And)? {
-            let right = self.equality()?;
+        if self.matches_forward(TokenKind::And)? {
+            let right = self.and()?;
             expr = Expression::Binary {
                 left: Box::new(expr),
                 operator: Operator::And,
                 right: Box::new(right),
-            }
+            };
+        }
+
+        Ok(expr)
+    }
+
+    fn included(&mut self) -> Res<Expression> {
+        let mut expr = self.is()?;
+
+        if self.matches(TokenKind::In)? {
+            let right = self.is()?;
+            expr = Expression::Binary {
+                left: Box::new(expr),
+                operator: Operator::Included,
+                right: Box::new(right),
+            };
+        }
+
+        Ok(expr)
+    }
+
+    fn is(&mut self) -> Res<Expression> {
+        let mut expr = self.equality()?;
+
+        if self.matches(TokenKind::Is)? {
+            let right = self.equality()?;
+            expr = Expression::Binary {
+                left: Box::new(expr),
+                operator: Operator::Is,
+                right: Box::new(right),
+            };
         }
 
         Ok(expr)
@@ -482,13 +547,13 @@ impl Parser {
     fn equality(&mut self) -> Res<Expression> {
         let mut expr = self.comparison()?;
 
-        while self.matches(TokenKind::Equal)? {
+        if self.matches(TokenKind::Equal)? {
             let right = self.comparison()?;
             expr = Expression::Binary {
                 left: Box::new(expr),
                 operator: Operator::Equal,
                 right: Box::new(right),
-            }
+            };
         }
 
         Ok(expr)
@@ -497,7 +562,7 @@ impl Parser {
     fn comparison(&mut self) -> Res<Expression> {
         let mut expr = self.term()?;
 
-        while self.matches(TokenKind::LeftCarret)? || self.matches(TokenKind::LessEqual)? {
+        if self.matches(TokenKind::LeftCarret)? || self.matches(TokenKind::LessEqual)? {
             let operator = match self.previous.lexeme.as_str() {
                 "<" => Ok(Operator::Less),
                 "<=" => Ok(Operator::LessEqual),
@@ -511,7 +576,7 @@ impl Parser {
                 left: Box::new(expr),
                 operator,
                 right: Box::new(right),
-            }
+            };
         }
 
         Ok(expr)
@@ -520,13 +585,13 @@ impl Parser {
     fn term(&mut self) -> Res<Expression> {
         let mut expr = self.factor()?;
 
-        while self.matches(TokenKind::Plus)? {
+        if self.matches(TokenKind::Plus)? {
             let right = self.factor()?;
             expr = Expression::Binary {
                 left: Box::new(expr),
                 operator: Operator::Add,
                 right: Box::new(right),
-            }
+            };
         }
 
         Ok(expr)
@@ -535,28 +600,47 @@ impl Parser {
     fn factor(&mut self) -> Res<Expression> {
         let mut expr = self.remainder()?;
 
-        while self.matches(TokenKind::Star)? {
+        if self.matches(TokenKind::Star)? {
             let right = self.remainder()?;
             expr = Expression::Binary {
                 left: Box::new(expr),
                 operator: Operator::Multiply,
                 right: Box::new(right),
-            }
+            };
         }
 
         Ok(expr)
     }
 
     fn remainder(&mut self) -> Res<Expression> {
-        let mut expr = self.primary()?;
+        let mut expr = self.unary()?;
 
-        while self.matches(TokenKind::Percent)? {
-            let right = self.primary()?;
+        if self.matches(TokenKind::Percent)? {
+            let right = self.unary()?;
             expr = Expression::Binary {
                 left: Box::new(expr),
                 operator: Operator::Rem,
                 right: Box::new(right),
-            }
+            };
+        }
+
+        Ok(expr)
+    }
+
+    fn unary(&mut self) -> Res<Expression> {
+        if self.matches_forward(TokenKind::Or)? || self.matches_forward(TokenKind::And)? {
+            self.expression()
+        } else {
+            self.member()
+        }
+    }
+
+    fn member(&mut self) -> Res<Expression> {
+        let mut expr = self.primary()?;
+
+        if self.matches(TokenKind::Dot)? {
+            self.consume(TokenKind::Identifier, "Expected identifier after \".\" for member expression")?;
+            expr = Expression::Member { call_site: Box::new(expr), member: self.make_variable()? };
         }
 
         Ok(expr)
@@ -571,16 +655,14 @@ impl Parser {
             self.tuple()
         } else if self.matches(TokenKind::Identifier)? {
             self.variable()
-        } else if self.matches(TokenKind::Select)? {
-            self.select()
-        } else if self.matches(TokenKind::Update)? {
-            self.update()
-        } else if self.matches(TokenKind::Insert)? {
-            self.insert()
+        } else if self.matches(TokenKind::Backtick)? {
+            self.sql_expression()
+        } else if self.matches(TokenKind::Newline)? {
+            self.expression()
         } else {
             Err(Unexpected(format!(
-                "Expected expression, got: {:?}",
-                self.current
+                "Expected expression, got a {:?}",
+                self.current.kind
             )))
         }
     }
@@ -609,7 +691,7 @@ impl Parser {
             }
             self.skip_newlines()?;
         }
-        self.consume(TokenKind::RightBrace, "Expect } to close a set expression")?;
+        self.consume(TokenKind::RightBrace, "Expected } to close a set expression")?;
 
         Ok(Expression::Set(members))
     }
@@ -625,12 +707,31 @@ impl Parser {
             }
         }
 
-        self.consume(TokenKind::RightParen, "Expect closing ) for tuple")?;
+        self.consume(TokenKind::RightParen, "Expected closing ) for tuple")?;
 
         Ok(Expression::Tuple(members))
     }
 
-    fn select(&mut self) -> Res<Expression> {
+    fn sql_expression(&mut self) -> Res<Expression> {
+        let sql = if self.matches(TokenKind::Select)? {
+            self.select()
+        } else if self.matches(TokenKind::Insert)? {
+            self.insert()
+        } else if self.matches(TokenKind::Update)? {
+            self.update()
+        } else {
+            Err(Unexpected(format!(
+                "Expected sql expression, got a {:?}",
+                self.current.kind
+            )))
+        }?;
+
+        self.consume(TokenKind::Backtick, "Expected ` to end sql expression")?;
+
+        Ok(Expression::Sql(sql))
+    }
+
+    fn select(&mut self) -> Res<SqlExpression> {
         let mut locking = false;
         let mut columns = vec![];
         while self.matches(TokenKind::Identifier)? {
@@ -641,9 +742,9 @@ impl Parser {
             }
         }
 
-        self.consume(TokenKind::From, "Expect from clause")?;
+        self.consume(TokenKind::From, "Expected from clause")?;
 
-        self.consume(TokenKind::Identifier, "Expect relation for select from")?;
+        self.consume(TokenKind::Identifier, "Expected relation for select from")?;
         let from = self.make_variable()?;
 
         let mut condition = None;
@@ -655,12 +756,12 @@ impl Parser {
         if self.matches(TokenKind::For)? {
             self.consume(
                 TokenKind::Update,
-                "Expect update after lock condition in select",
+                "Expected update after lock condition in select",
             )?;
             locking = true
         }
 
-        Ok(Expression::Select {
+        Ok(SqlExpression::Select {
             columns,
             from,
             condition,
@@ -668,11 +769,11 @@ impl Parser {
         })
     }
 
-    fn update(&mut self) -> Res<Expression> {
+    fn update(&mut self) -> Res<SqlExpression> {
         self.consume(TokenKind::Identifier, "expect relation for update")?;
         let relation = self.make_variable()?;
 
-        self.consume(TokenKind::Set, "Expect set for update expression")?;
+        self.consume(TokenKind::Set, "Expected set for update expression")?;
 
         let update = Box::new(self.expression()?);
 
@@ -681,22 +782,22 @@ impl Parser {
             condition = Some(Box::new(self.expression()?));
         }
 
-        Ok(Update {
+        Ok(SqlExpression::Update {
             relation,
             update,
             condition,
         })
     }
 
-    fn insert(&mut self) -> Res<Expression> {
-        self.consume(TokenKind::Into, "Expect into after insert")?;
+    fn insert(&mut self) -> Res<SqlExpression> {
+        self.consume(TokenKind::Into, "Expected into after insert")?;
 
-        self.consume(TokenKind::Identifier, "Expect relation after insert into")?;
+        self.consume(TokenKind::Identifier, "Expected relation after insert into")?;
         let relation = self.make_variable()?;
 
         self.consume(
             TokenKind::LeftParen,
-            "Expect column declaration after relation in insert into",
+            "Expected column declaration after relation in insert into",
         )?;
 
         let mut columns = vec![];
@@ -710,11 +811,11 @@ impl Parser {
 
         self.consume(
             TokenKind::RightParen,
-            "Expect ) closing columns declaration",
+            "Expected ) closing columns declaration",
         )?;
         self.consume(
             TokenKind::Values,
-            "Expect values after relation declaration",
+            "Expected values after relation declaration",
         )?;
 
         let mut values = vec![];
@@ -726,7 +827,7 @@ impl Parser {
             }
         }
 
-        Ok(Insert {
+        Ok(SqlExpression::Insert {
             relation,
             columns,
             values,
@@ -748,9 +849,9 @@ impl Parser {
     }
 }
 
-fn formatting(expr: &Expression) -> String {
+fn formatting_sql(expr: &SqlExpression) -> String {
     match expr {
-        Expression::Select {
+        SqlExpression::Select {
             columns,
             from,
             condition,
@@ -778,7 +879,7 @@ fn formatting(expr: &Expression) -> String {
 
             res
         }
-        Update {
+        SqlExpression::Update {
             relation,
             update,
             condition,
@@ -791,7 +892,7 @@ fn formatting(expr: &Expression) -> String {
 
             res
         }
-        Insert {
+        SqlExpression::Insert {
             relation,
             columns,
             values,
@@ -818,6 +919,15 @@ fn formatting(expr: &Expression) -> String {
 
             res
         }
+        SqlExpression::Binary { .. } => panic!(),
+        SqlExpression::Assignment(_, _) => panic!(),
+        SqlExpression::Integer(_) => panic!(),
+    }
+}
+
+fn formatting(expr: &Expression) -> String {
+    match expr {
+        Expression::Sql(sql) => formatting_sql(sql),
         Expression::Binary {
             left,
             operator,
@@ -833,6 +943,7 @@ fn formatting(expr: &Expression) -> String {
                 Operator::Less => "<",
                 Operator::Included => "in",
                 Operator::And => "and",
+                Operator::Or => "or",
             };
             format!("{} {} {}", formatting(left), op, formatting(right))
         }
@@ -872,6 +983,7 @@ fn formatting(expr: &Expression) -> String {
             res
         }
         Expression::Value(v) => v.to_string(),
+        Expression::Member { call_site, member } => format!("{}.{}", formatting(call_site), member.name),
     }
 }
 
