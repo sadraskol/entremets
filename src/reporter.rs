@@ -1,13 +1,10 @@
 use crate::engine::Report;
-use crate::parser::{format_statement, Mets};
+use crate::parser::Mets;
 use crate::sql_interpreter::SqlDatabase;
 
 pub fn summary(mets: &Mets, report: &Report) -> String {
     let mut base = if let Some(violation) = &report.violation {
-        let mut x = format!(
-            "Following property was violated: {}\n",
-            format_statement(&violation.property)
-        );
+        let mut x = format!("Following property was violated: {}\n", violation.property);
         x.push_str("The following counter example was found:\n");
 
         let mut last_trace = &violation.log[0];
@@ -24,7 +21,7 @@ pub fn summary(mets: &Mets, report: &Report) -> String {
             x.push_str(&format!(
                 "Process {}: {}\n",
                 index,
-                format_statement(&mets.processes[index][trace.pc[index] - 1])
+                mets.processes[index][trace.pc[index] - 1]
             ));
             if !trace.locals.is_empty() {
                 x.push_str(&format!("Local State {:?}\n", trace.locals));
@@ -52,11 +49,7 @@ fn sql_summary(global: &SqlDatabase) -> String {
             let values = row.values();
             let mut enumerate = values.iter().enumerate().peekable();
             while let Some((i, _)) = enumerate.next() {
-                x.push_str(&format!(
-                    "{}: {}",
-                    row.keys()[i],
-                    row.values()[i].to_string()
-                ));
+                x.push_str(&format!("{}: {}", row.keys()[i], row.values()[i]));
                 if enumerate.peek().is_some() {
                     x.push_str(", ");
                 }

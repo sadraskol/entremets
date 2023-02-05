@@ -1,7 +1,7 @@
-use crate::engine::{ProcessState, PropertyCheck, State, Value};
+use crate::engine::{ProcessState, PropertyCheck, State, Transaction, TransactionState, Value};
 use crate::interpreter::InterpreterError::{TypeError, Unexpected};
 use crate::parser::{Expression, Operator, SqlExpression, Statement};
-use crate::sql_interpreter::SqlEngineError;
+use crate::sql_interpreter::{SqlEngineError, TransactionId};
 
 #[derive(Debug)]
 pub enum InterpreterError {
@@ -57,22 +57,64 @@ impl Interpreter {
     }
 
     pub fn statement(&mut self, statement: &Statement) -> Unit {
+        match self.priv_statement(statement) {
+            Ok(_) => Ok(()),
+            Err(InterpreterError::SqlEngineError(SqlEngineError::TransactionAborted)) => {
+                let info = &self.next_state.txs[self.idx];
+                self.next_state.sql.abort(&info.id);
+
+                if let Some(tx) = &info.name {
+                    self.next_state.locals.insert(
+                        tx.clone(),
+                        Value::Tx(Transaction(TransactionState::Aborted)),
+                    );
+                }
+                self.next_state.txs[self.idx].state = TransactionState::Aborted;
+                Ok(())
+            }
+            Err(err) => Err(err),
+        }
+    }
+
+    fn priv_statement(&mut self, statement: &Statement) -> Unit {
         match statement {
-            Statement::Begin(isolation, _tx_name) => {
-                self.next_state.txs[self.idx] =
-                    Some(self.next_state.sql.open_transaction(*isolation));
+            Statement::Begin(isolation, tx_name) => {
+                self.next_state.txs[self.idx].name = tx_name.as_ref().map(|v| v.name.clone());
+                let id = self.next_state.sql.open_transaction(*isolation);
+                self.next_state.txs[self.idx].id = id;
+                self.next_state.txs[self.idx].state = TransactionState::Running;
+
+                if let Some(tx) = tx_name {
+                    self.next_state.locals.insert(
+                        tx.name.clone(),
+                        Value::Tx(Transaction(TransactionState::Running)),
+                    );
+                }
             }
             Statement::Commit => {
-                self.next_state
-                    .sql
-                    .commit(&self.next_state.txs[self.idx].unwrap());
-                self.next_state.txs[self.idx] = None
+                let info = &self.next_state.txs[self.idx];
+                if info.state == TransactionState::Running {
+                    self.next_state.sql.commit(&info.id);
+                    if let Some(tx) = &info.name {
+                        self.next_state.locals.insert(
+                            tx.clone(),
+                            Value::Tx(Transaction(TransactionState::Committed)),
+                        );
+                    }
+                    self.next_state.txs[self.idx].state = TransactionState::Committed;
+                }
             }
             Statement::Abort => {
-                self.next_state
-                    .sql
-                    .abort(&self.next_state.txs[self.idx].unwrap());
-                self.next_state.txs[self.idx] = None
+                let info = &self.next_state.txs[self.idx];
+                self.next_state.sql.abort(&info.id);
+
+                if let Some(tx) = &info.name {
+                    self.next_state.locals.insert(
+                        tx.clone(),
+                        Value::Tx(Transaction(TransactionState::Aborted)),
+                    );
+                }
+                self.next_state.txs[self.idx].state = TransactionState::Aborted;
             }
             Statement::Expression(expr) => {
                 self.interpret(expr)?;
@@ -88,7 +130,7 @@ impl Interpreter {
     fn interpret(&mut self, expression: &Expression) -> Res<Value> {
         match expression {
             Expression::Sql(sql_expr) => {
-                self.next_state.sql.cur_tx = self.state.txs[self.idx];
+                self.next_state.sql.cur_tx = self.running_tx();
                 let reified = self.reify_up_variable(sql_expr)?;
                 Ok(self.next_state.sql.interpret(&reified)?)
             }
@@ -108,7 +150,7 @@ impl Interpreter {
                 .locals
                 .get(&variable.name)
                 .cloned()
-                .unwrap_or(Value::Nil)),
+                .unwrap_or(Value::Tx(Transaction(TransactionState::NotExisting)))),
             Expression::Integer(i) => Ok(Value::Integer(*i)),
             Expression::Set(members) => {
                 let mut res = vec![];
@@ -124,8 +166,23 @@ impl Interpreter {
                 }
                 Ok(Value::Tuple(res))
             }
-            Expression::Value(_) => panic!(),
-            Expression::Member { .. } => Ok(Value::Bool(true)),
+            Expression::Member { call_site, member } => {
+                let target = self.assert_transaction(call_site)?;
+                match target.0 {
+                    TransactionState::NotExisting => Ok(Value::Bool(false)),
+                    TransactionState::Running => Ok(Value::Bool(false)),
+                    TransactionState::Aborted => Ok(Value::Bool(member.name == "aborted")),
+                    TransactionState::Committed => Ok(Value::Bool(member.name == "committed")),
+                }
+            }
+        }
+    }
+
+    fn assert_transaction(&mut self, expr: &Expression) -> Res<Transaction> {
+        if let Value::Tx(value) = self.interpret(expr)? {
+            Ok(value)
+        } else {
+            Err(TypeError(expr.clone(), "transaction".to_string()))
         }
     }
 
@@ -150,14 +207,6 @@ impl Interpreter {
             Ok(value)
         } else {
             Err(TypeError(expr.clone(), "bool".to_string()))
-        }
-    }
-
-    fn assert_tuple(&mut self, expr: &Expression) -> Res<Vec<Value>> {
-        if let Value::Tuple(value) = self.interpret(expr)? {
-            Ok(value)
-        } else {
-            Err(TypeError(expr.clone(), "tuple".to_string()))
         }
     }
 
@@ -299,6 +348,13 @@ impl Interpreter {
                     .unwrap_or(Value::Nil),
             )),
             expr => Ok(expr.clone()),
+        }
+    }
+
+    fn running_tx(&self) -> Option<TransactionId> {
+        match &self.state.txs[self.idx].state {
+            TransactionState::Running => Some(self.state.txs[self.idx].id),
+            _ => None,
         }
     }
 }

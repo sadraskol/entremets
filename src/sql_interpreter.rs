@@ -53,14 +53,14 @@ pub struct Lock {
 }
 
 #[derive(PartialEq, Debug, Clone)]
-pub struct Transaction {
+pub struct TransactionContext {
     changes: Vec<Changes>,
     pub locks: Vec<Lock>,
 }
 
-impl Transaction {
+impl TransactionContext {
     fn new() -> Self {
-        Transaction {
+        TransactionContext {
             changes: vec![],
             locks: vec![],
         }
@@ -84,7 +84,7 @@ enum SqlContext {
 pub struct SqlDatabase {
     pub cur_tx: Option<TransactionId>,
     pub tables: HashMap<String, Vec<Row>>,
-    pub transactions: HashMap<TransactionId, Transaction>,
+    pub transactions: HashMap<TransactionId, TransactionContext>,
     tx: TransactionId,
     sql_context: Option<SqlContext>,
 }
@@ -116,6 +116,7 @@ impl TransactionId {
 pub enum SqlEngineError {
     RowLockedError,
     SqlTypeError(SqlExpression, String),
+    TransactionAborted,
     UnknownVariable(String),
 }
 
@@ -135,7 +136,7 @@ impl SqlDatabase {
 
     pub fn open_transaction(&mut self, _isolation: IsolationLevel) -> TransactionId {
         let new_tx = self.tx.increment();
-        self.transactions.insert(new_tx, Transaction::new());
+        self.transactions.insert(new_tx, TransactionContext::new());
 
         new_tx
     }
@@ -215,16 +216,6 @@ impl SqlDatabase {
                 let right = self.interpret(right)?;
                 Ok(Value::Bool(left == right))
             }
-            SqlOperator::LessEqual => {
-                let left = self.assert_integer(left)?;
-                let right = self.assert_integer(right)?;
-                Ok(Value::Bool(left <= right))
-            }
-            SqlOperator::Less => {
-                let left = self.assert_integer(left)?;
-                let right = self.assert_integer(right)?;
-                Ok(Value::Bool(left < right))
-            }
             SqlOperator::And => {
                 let left = self.assert_bool(left)?;
                 let right = self.assert_bool(right)?;
@@ -278,6 +269,7 @@ impl SqlDatabase {
         let table = &relation.name;
         let rows = self.rows(&self.cur_tx, table);
 
+        let mut mutated = false;
         for row in rows {
             if let Some(cond) = condition {
                 self.sql_context = Some(SqlContext::Where {
@@ -291,6 +283,7 @@ impl SqlDatabase {
                         table: table.clone(),
                     });
                     self.interpret(update)?;
+                    mutated = true;
                 }
             } else {
                 self.sql_context = Some(SqlContext::Update {
@@ -299,11 +292,17 @@ impl SqlDatabase {
                     table: table.clone(),
                 });
                 self.interpret(update)?;
+                mutated = true;
             }
             self.sql_context = None;
         }
 
-        Ok(Value::Nil)
+        if !mutated {
+            Err(SqlEngineError::TransactionAborted)
+        } else {
+            Ok(Value::Nil)
+        }
+
     }
 
     fn interpret_select(
@@ -369,14 +368,6 @@ impl SqlDatabase {
         }
     }
 
-    fn assert_set(&mut self, expr: &SqlExpression) -> Res<Vec<Value>> {
-        if let Value::Set(value) = self.interpret(expr)? {
-            Ok(value)
-        } else {
-            Err(SqlTypeError(expr.clone(), "set".to_string()))
-        }
-    }
-
     fn assert_bool(&mut self, expr: &SqlExpression) -> Res<bool> {
         if let Value::Bool(value) = self.interpret(expr)? {
             Ok(value)
@@ -413,8 +404,8 @@ impl SqlDatabase {
     }
 
     pub fn commit(&mut self, tx: &TransactionId) {
-        let x = self.transactions.remove(tx).unwrap();
-        for change in x.changes {
+        let tx = self.transactions.remove(tx).unwrap();
+        for change in tx.changes {
             match change {
                 Changes::Insert(table, rows) => {
                     let table = self.tables.entry(table.clone()).or_default();

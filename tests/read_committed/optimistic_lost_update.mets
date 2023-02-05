@@ -12,7 +12,7 @@ end
 process do
     transaction tx2 read_committed do
         let t2_age := `select age from users where id = 1`
-        `update users set age := $t2_age * 2 where id = 1 and age = $t1_age`
+        `update users set age := $t2_age * 2 where id = 1 and age = $t2_age`
     end
 end
 

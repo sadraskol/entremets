@@ -1,24 +1,11 @@
 use crate::engine::Value;
 use crate::parser::ParserErrorKind::Unexpected;
-use crate::scanner::{Position, Scanner, ScannerError, Token, TokenKind};
+use crate::scanner::{Scanner, ScannerError, Token, TokenKind};
+use std::fmt::Debug;
+use std::fmt::Formatter;
 use std::mem;
 use std::num::ParseIntError;
-use std::ops::Deref;
 use std::str::FromStr;
-
-struct Lexeme<T> {
-    t: T,
-    position: Position,
-    lexeme: String,
-}
-
-impl<T> Deref for Lexeme<T> {
-    type Target = T;
-
-    fn deref(&self) -> &Self::Target {
-        &self.t
-    }
-}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Statement {
@@ -36,6 +23,14 @@ pub enum Statement {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum IsolationLevel {
     ReadCommitted,
+}
+
+impl std::fmt::Display for IsolationLevel {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            IsolationLevel::ReadCommitted => f.write_str("read committed"),
+        }
+    }
 }
 
 #[derive(PartialEq, Debug, Clone)]
@@ -92,9 +87,6 @@ pub enum Expression {
     Integer(i16),
     Set(Vec<Expression>),
     Tuple(Vec<Expression>),
-
-    // this enum is only here for convenience for the sql interpreter
-    Value(Value),
 }
 
 #[derive(PartialEq, Debug, Clone)]
@@ -117,8 +109,6 @@ pub enum SqlOperator {
     Multiply,
     Rem,
     Equal,
-    LessEqual,
-    Less,
     And,
 }
 
@@ -134,7 +124,6 @@ pub struct Parser {
 pub enum ParserErrorKind {
     ParseInt(ParseIntError),
     Scanner(ScannerError),
-    Uninitialized,
     Unexpected(String),
 }
 
@@ -888,10 +877,7 @@ impl Parser {
 
         self.consume(
             TokenKind::Backtick,
-            &format!(
-                "Expected ` to end sql expression '{}'",
-                formatting_sql(&sql)
-            ),
+            &format!("Expected ` to end sql expression '{sql}'"),
         )?;
 
         Ok(Expression::Sql(sql))
@@ -1015,190 +1001,191 @@ impl Parser {
     }
 }
 
-fn formatting_sql(expr: &SqlExpression) -> String {
-    match expr {
-        SqlExpression::Select {
-            columns,
-            from,
-            condition,
-            locking,
-        } => {
-            let mut res = "select ".to_string();
+impl std::fmt::Display for SqlExpression {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SqlExpression::Select {
+                columns,
+                from,
+                condition,
+                locking,
+            } => {
+                f.write_str("select ")?;
 
-            let mut iter = columns.iter().peekable();
-            while let Some(col) = iter.next() {
-                res.push_str(&col.name);
-                if iter.peek().is_some() {
-                    res.push_str(", ");
+                let mut iter = columns.iter().peekable();
+                while let Some(col) = iter.next() {
+                    std::fmt::Display::fmt(&col.name, f)?;
+                    if iter.peek().is_some() {
+                        f.write_str(", ")?;
+                    }
                 }
-            }
 
-            res.push_str(&format!(" from {}", from.name));
+                f.write_fmt(format_args!(" from {}", from.name))?;
 
-            if let Some(cond) = condition {
-                res.push_str(&format!(" where {}", formatting_sql(cond)))
-            }
-
-            if *locking {
-                res.push_str(" for update")
-            }
-
-            res
-        }
-        SqlExpression::Update {
-            relation,
-            update,
-            condition,
-        } => {
-            let mut res = format!("update {} set {}", relation.name, formatting_sql(update));
-
-            if let Some(cond) = condition {
-                res.push_str(&format!(" where {}", formatting_sql(cond)))
-            }
-
-            res
-        }
-        SqlExpression::Insert {
-            relation,
-            columns,
-            values,
-        } => {
-            let mut res = format!("insert {} (", relation.name);
-
-            let mut iter = columns.iter().peekable();
-            while let Some(col) = iter.next() {
-                res.push_str(&col.name);
-                if iter.peek().is_some() {
-                    res.push_str(", ");
+                if let Some(cond) = condition {
+                    f.write_fmt(format_args!(" where {cond}"))?;
                 }
-            }
 
-            res.push_str(") values ");
-
-            let mut iter = values.iter().peekable();
-            while let Some(value) = iter.next() {
-                res.push_str(&formatting_sql(value));
-                if iter.peek().is_some() {
-                    res.push_str(", ");
+                if *locking {
+                    f.write_str(" for update")?;
                 }
+
+                Ok(())
             }
+            SqlExpression::Update {
+                relation,
+                update,
+                condition,
+            } => {
+                f.write_fmt(format_args!("update {} set {}", relation.name, update))?;
 
-            res
-        }
-        SqlExpression::Binary {
-            left,
-            operator,
-            right,
-        } => {
-            let op = match operator {
-                SqlOperator::Add => "+",
-                SqlOperator::Multiply => "*",
-                SqlOperator::Rem => "%",
-                SqlOperator::Equal => "=",
-                SqlOperator::LessEqual => "<=",
-                SqlOperator::Less => "<",
-                SqlOperator::And => "and",
-            };
-            format!("{} {} {}", formatting_sql(left), op, formatting_sql(right))
-        }
-        SqlExpression::Assignment(var, expr) => format!("{} := {}", var.name, formatting_sql(expr)),
-        SqlExpression::Integer(i) => i.to_string(),
-        SqlExpression::Tuple(values) => {
-            let mut res = "(".to_string();
-
-            let mut iter = values.iter().peekable();
-            while let Some(value) = iter.next() {
-                res.push_str(&formatting_sql(value));
-                if iter.peek().is_some() {
-                    res.push_str(", ");
+                if let Some(cond) = condition {
+                    f.write_fmt(format_args!(" where {cond}"))?;
                 }
+
+                Ok(())
             }
+            SqlExpression::Insert {
+                relation,
+                columns,
+                values,
+            } => {
+                f.write_fmt(format_args!("insert {} (", relation.name))?;
 
-            res.push(')');
-
-            res
-        }
-        SqlExpression::Var(v) => v.name.clone(),
-        SqlExpression::UpVariable(v) => format!("${}", v.name),
-        SqlExpression::Value(_) => panic!("no value formatting"),
-    }
-}
-
-fn formatting(expr: &Expression) -> String {
-    match expr {
-        Expression::Sql(sql) => formatting_sql(sql),
-        Expression::Binary {
-            left,
-            operator,
-            right,
-        } => {
-            let op = match operator {
-                Operator::Add => "+",
-                Operator::Multiply => "*",
-                Operator::Rem => "%",
-                Operator::Equal => "=",
-                Operator::Is => "is",
-                Operator::LessEqual => "<=",
-                Operator::Less => "<",
-                Operator::Included => "in",
-                Operator::And => "and",
-                Operator::Or => "or",
-            };
-            format!("{} {} {}", formatting(left), op, formatting(right))
-        }
-        Expression::Assignment(var, value) => {
-            format!("{} := {}", var.name, formatting(value))
-        }
-        Expression::Var(var) => var.name.to_string(),
-        Expression::Integer(i) => i.to_string(),
-        Expression::Set(values) => {
-            let mut res = "{".to_string();
-
-            let mut iter = values.iter().peekable();
-            while let Some(value) = iter.next() {
-                res.push_str(&formatting(value));
-                if iter.peek().is_some() {
-                    res.push_str(", ");
+                let mut iter = columns.iter().peekable();
+                while let Some(col) = iter.next() {
+                    std::fmt::Display::fmt(&col.name, f)?;
+                    if iter.peek().is_some() {
+                        f.write_str(", ")?;
+                    }
                 }
-            }
 
-            res.push('}');
+                f.write_str(") values ")?;
 
-            res
-        }
-        Expression::Tuple(values) => {
-            let mut res = "(".to_string();
-
-            let mut iter = values.iter().peekable();
-            while let Some(value) = iter.next() {
-                res.push_str(&formatting(value));
-                if iter.peek().is_some() {
-                    res.push_str(", ");
+                let mut iter = values.iter().peekable();
+                while let Some(value) = iter.next() {
+                    std::fmt::Display::fmt(&value, f)?;
+                    if iter.peek().is_some() {
+                        f.write_str(", ")?;
+                    }
                 }
+
+                Ok(())
             }
+            SqlExpression::Binary {
+                left,
+                operator,
+                right,
+            } => {
+                let op = match operator {
+                    SqlOperator::Add => "+",
+                    SqlOperator::Multiply => "*",
+                    SqlOperator::Rem => "%",
+                    SqlOperator::Equal => "=",
+                    SqlOperator::And => "and",
+                };
+                f.write_fmt(format_args!("{left} {op} {right}"))
+            }
+            SqlExpression::Assignment(var, expr) => {
+                f.write_fmt(format_args!("{} := {expr}", var.name))
+            }
+            SqlExpression::Integer(i) => std::fmt::Display::fmt(&i, f),
+            SqlExpression::Tuple(values) => {
+                f.write_str("(")?;
 
-            res.push(')');
+                let mut iter = values.iter().peekable();
+                while let Some(value) = iter.next() {
+                    std::fmt::Display::fmt(&value, f)?;
+                    if iter.peek().is_some() {
+                        f.write_str(", ")?;
+                    }
+                }
 
-            res
-        }
-        Expression::Value(v) => v.to_string(),
-        Expression::Member { call_site, member } => {
-            format!("{}.{}", formatting(call_site), member.name)
+                f.write_str(")")
+            }
+            SqlExpression::Var(v) => std::fmt::Display::fmt(&v.name, f),
+            SqlExpression::UpVariable(v) => f.write_fmt(format_args!("${}", v.name)),
+            SqlExpression::Value(_) => panic!("no value formatting"),
         }
     }
 }
 
-pub fn format_statement(stmt: &Statement) -> String {
-    match stmt {
-        Statement::Begin(level, Some(tx_name)) => format!("begin {level:?} ({})", tx_name.name),
-        Statement::Begin(level, None) => format!("begin {level:?}"),
-        Statement::Commit => "commit".to_string(),
-        Statement::Abort => "abort".to_string(),
-        Statement::Expression(expr) => formatting(expr),
-        Statement::Latch => "latch".to_string(),
-        Statement::Always(expr) => format!("always[{}]", formatting(expr)),
-        Statement::Never(expr) => format!("never[{}]", formatting(expr)),
-        Statement::Eventually(expr) => format!("eventually<{}>", formatting(expr)),
+impl std::fmt::Display for Expression {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Expression::Sql(sql) => std::fmt::Display::fmt(&sql, f),
+            Expression::Binary {
+                left,
+                operator,
+                right,
+            } => {
+                let op = match operator {
+                    Operator::Add => "+",
+                    Operator::Multiply => "*",
+                    Operator::Rem => "%",
+                    Operator::Equal => "=",
+                    Operator::Is => "is",
+                    Operator::LessEqual => "<=",
+                    Operator::Less => "<",
+                    Operator::Included => "in",
+                    Operator::And => "and",
+                    Operator::Or => "or",
+                };
+                f.write_fmt(format_args!("{left} {op} {right}"))
+            }
+            Expression::Assignment(var, value) => {
+                f.write_fmt(format_args!("{} := {}", var.name, value))
+            }
+            Expression::Var(var) => std::fmt::Display::fmt(&var.name, f),
+            Expression::Integer(i) => std::fmt::Display::fmt(&i, f),
+            Expression::Set(values) => {
+                f.write_str("{")?;
+
+                let mut iter = values.iter().peekable();
+                while let Some(value) = iter.next() {
+                    std::fmt::Display::fmt(&value, f)?;
+                    if iter.peek().is_some() {
+                        f.write_str(", ")?;
+                    }
+                }
+
+                f.write_str("}")
+            }
+            Expression::Tuple(values) => {
+                f.write_str("(")?;
+
+                let mut iter = values.iter().peekable();
+                while let Some(value) = iter.next() {
+                    std::fmt::Display::fmt(&value, f)?;
+                    if iter.peek().is_some() {
+                        f.write_str(", ")?;
+                    }
+                }
+
+                f.write_str(")")
+            }
+            Expression::Member { call_site, member } => {
+                f.write_fmt(format_args!("{}.{}", call_site, member.name))
+            }
+        }
+    }
+}
+
+impl std::fmt::Display for Statement {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Statement::Begin(level, Some(tx_name)) => {
+                f.write_fmt(format_args!("begin {level} ({})", tx_name.name))
+            }
+            Statement::Begin(level, None) => f.write_fmt(format_args!("begin {level}")),
+            Statement::Commit => f.write_str("commit"),
+            Statement::Abort => f.write_str("abort"),
+            Statement::Expression(expr) => std::fmt::Display::fmt(&expr, f),
+            Statement::Latch => f.write_str("latch"),
+            Statement::Always(expr) => f.write_fmt(format_args!("always[{expr}]")),
+            Statement::Never(expr) => f.write_fmt(format_args!("never[{expr}]")),
+            Statement::Eventually(expr) => f.write_fmt(format_args!("eventually<{expr}>")),
+        }
     }
 }
 
@@ -1296,7 +1283,7 @@ mod test {
                         })),
                         operator: SqlOperator::Add,
                         right: Box::new(SqlExpression::Integer(1)),
-                    })
+                    }),
                 )),
                 condition: Some(Box::new(SqlExpression::Binary {
                     left: Box::new(SqlExpression::Binary {

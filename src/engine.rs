@@ -2,57 +2,71 @@ use crate::interpreter::{Interpreter, InterpreterError};
 use crate::parser::{Mets, Statement};
 use crate::sql_interpreter::{HashableRow, SqlDatabase, SqlEngineError, TransactionId};
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::fmt::Formatter;
+
+#[derive(Hash, Eq, PartialEq, Debug, Clone)]
+pub enum TransactionState {
+    NotExisting,
+    Running,
+    Aborted,
+    Committed,
+}
+
+#[derive(Hash, Eq, PartialEq, Debug, Clone)]
+pub struct Transaction(pub TransactionState);
 
 #[derive(Hash, Eq, PartialEq, Debug, Clone)]
 pub enum Value {
     Nil,
+    Tx(Transaction),
     Bool(bool),
     Integer(i16),
     Set(Vec<Value>),
     Tuple(Vec<Value>),
 }
 
-impl Value {
-    #[allow(clippy::inherent_to_string)]
-    pub fn to_string(&self) -> String {
+impl std::fmt::Display for Value {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            Value::Nil => "nil".to_string(),
+            Value::Nil => f.write_str("nil"),
             Value::Bool(x) => {
                 if *x {
-                    "true".to_string()
+                    f.write_str("true")
                 } else {
-                    "false".to_string()
+                    f.write_str("false")
                 }
             }
-            Value::Integer(i) => i.to_string(),
+            Value::Integer(i) => std::fmt::Display::fmt(&i, f),
             Value::Set(set) => {
-                let mut res = "{".to_string();
+                f.write_str("{")?;
                 let mut peekable = set.iter().peekable();
                 while let Some(i) = peekable.next() {
-                    res += &i.to_string();
+                    std::fmt::Display::fmt(&i, f)?;
                     if peekable.peek().is_some() {
-                        res = res.to_owned() + ", ";
+                        f.write_str(", ")?;
                     }
                 }
 
-                res += "}";
-
-                res
+                f.write_str("}")
             }
             Value::Tuple(tuple) => {
-                let mut res = "(".to_string();
+                f.write_str("(")?;
                 let mut peekable = tuple.iter().peekable();
                 while let Some(i) = peekable.next() {
-                    res += &i.to_string();
+                    std::fmt::Display::fmt(&i, f)?;
                     if peekable.peek().is_some() {
-                        res = res.to_owned() + ", ";
+                        f.write_str(", ")?;
                     }
                 }
 
-                res += ")";
-
-                res
+                f.write_str(")")
             }
+            Value::Tx(tx) => match tx.0 {
+                TransactionState::NotExisting => f.write_str("non started transaction"),
+                TransactionState::Running => f.write_str("running transaction"),
+                TransactionState::Aborted => f.write_str("aborted transaction"),
+                TransactionState::Committed => f.write_str("committed transaction"),
+            },
         }
     }
 }
@@ -80,10 +94,17 @@ pub enum ProcessState {
 }
 
 #[derive(PartialEq, Debug, Clone)]
+pub struct TransactionInfo {
+    pub id: TransactionId,
+    pub name: Option<String>,
+    pub state: TransactionState,
+}
+
+#[derive(PartialEq, Debug, Clone)]
 pub struct State {
     pc: Vec<usize>,
     pub state: Vec<ProcessState>,
-    pub txs: Vec<Option<TransactionId>>,
+    pub txs: Vec<TransactionInfo>,
     pub sql: SqlDatabase,
     pub locals: HashMap<String, Value>,
     log: Vec<Trace>,
@@ -137,7 +158,6 @@ impl From<InterpreterError> for CheckerError {
 }
 
 type Res<T> = Result<T, CheckerError>;
-type Unit = Res<()>;
 
 pub fn model_checker(mets: &Mets) -> Result<Report, String> {
     match private_model_checker(mets) {
@@ -199,19 +219,19 @@ fn private_model_checker(mets: &Mets) -> Res<Report> {
                 interpreter.idx = idx;
                 match interpreter.statement(&code[state.pc[idx]]) {
                     Ok(_) => {}
-                    Err(err) => match err {
+                    Err(err) => return match err {
                         InterpreterError::Unexpected(x) => {
-                            return Err(CheckerError::RuntimeError(format!("{x:?}")));
+                            Err(CheckerError::RuntimeError(format!("{x:?}")))
                         }
                         InterpreterError::TypeError(x, y) => {
-                            return Err(CheckerError::RuntimeError(format!("{x:?} {y:?}")));
+                            Err(CheckerError::RuntimeError(format!("{x} not of type {y}")))
                         }
                         InterpreterError::SqlEngineError(SqlEngineError::RowLockedError) => {
                             interpreter.reset();
                             continue;
                         }
                         InterpreterError::SqlEngineError(x) => {
-                            return Err(CheckerError::RuntimeError(format!("{x:?}")));
+                            Err(CheckerError::RuntimeError(format!("{x:?}")))
                         }
                     },
                 }
@@ -268,7 +288,7 @@ fn init_state(mets: &Mets) -> Res<State> {
             .iter()
             .map(|_| ProcessState::Running)
             .collect(),
-        txs: mets.processes.iter().map(|_| None).collect(),
+        txs: mets.processes.iter().map(|_| TransactionInfo { id: TransactionId(usize::MAX), name: None, state: TransactionState::NotExisting, }).collect(),
         sql: SqlDatabase::new(),
         locals: HashMap::new(),
         log: vec![],

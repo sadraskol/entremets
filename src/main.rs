@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 extern crate core;
 
 use crate::engine::model_checker;
@@ -42,9 +40,6 @@ fn main() {
                 message.current.position.start_col,
                 message.current.lexeme
             ),
-            ParserErrorKind::Uninitialized => {
-                println!("operation on previous/current token at the start of the file.")
-            }
             ParserErrorKind::Unexpected(err) => println!(
                 "Error at {file}:{}:{}: Unexpected token {:?}: {err}",
                 message.current.position.start_line,

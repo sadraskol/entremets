@@ -425,10 +425,6 @@ impl Scanner {
         self.source.chars().nth(self.current.index).unwrap()
     }
 
-    fn peek_next(&self) -> Option<char> {
-        self.source.chars().nth(self.current.index + 1)
-    }
-
     fn matches(&mut self, c: char) -> bool {
         if self.source.chars().nth(self.current.index) == Some(c) {
             self.current.advance();
