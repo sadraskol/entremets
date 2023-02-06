@@ -15,12 +15,12 @@ Let's write the first code:
 
     process do
       let age_1 := `select age from users where id = 1`
-      `update users set age := age_1 * 2`
+      `update users set age := $age_1 * 2`
     end
 
     process do
       let age_2 := `select age from users where id = 1`
-      `update users set age := age_2 + 1`
+      `update users set age := $age_2 + 1`
     end
 
 Run the specification with :code:`entremets no-transaction.mets`.
@@ -45,12 +45,12 @@ Let's add a simple property:
 
     process do
       let age_1 := `select age from users where id = 1`
-      `update users set age := age_1 * 2`
+      `update users set age := $age_1 * 2`
     end
 
     process do
       let age_2 := `select age from users where id = 1`
-      `update users set age := age_2 + 1`
+      `update users set age := $age_2 + 1`
     end
 
     property = eventually<`select age from users where id = 1` in {21, 22}>
@@ -94,14 +94,14 @@ The first step to fix this in SQL is to use a transaction:
     process do
       transaction tx1 read_committed do
         let age_1 := `select age from users where id = 1`
-        `update users set age := age_1 * 2`
+        `update users set age := $age_1 * 2`
       end
     end
 
     process do
       transaction tx2 read_committed do
         let age_2 := `select age from users where id = 1`
-        `update users set age := age_2 + 1`
+        `update users set age := $age_2 + 1`
       end
     end
 
@@ -156,14 +156,14 @@ SQL offers :code:`select for update` to achieve this:
     process do
       transaction tx1 read_committed do
         let age_1 := `select age from users where id = 1 for update`
-        `update users set age := age_1 * 2
+        `update users set age := $age_1 * 2
       end
     end
 
     process do
       transaction tx2 read_committed do
         let age_2 := `select age from users where id = 1 for update`
-        `update users set age := age_2 + 1`
+        `update users set age := $age_2 + 1`
       end
     end
 
