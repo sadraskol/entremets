@@ -1,8 +1,8 @@
 Getting started
 ==================
 
-Clone the `repository <https://github.com/sadraskol/entremets>`_
-and run :code:`cargo build`.
+Install `rust <https://www.rust-lang.org/tools/install>`_.
+You can then install :code:`entremets` with :code:`cargo install entremets@0.1.0-alpha.1`
 
 Let's write the first code:
 
@@ -23,7 +23,7 @@ Let's write the first code:
       `update users set age := age_2 + 1`
     end
 
-Run the specification with :code:`cargo run no-transaction.mets`.
+Run the specification with :code:`entremets no-transaction.mets`.
 The output tells us it explored the possible states:
 
 .. code-block:: text
@@ -57,7 +57,7 @@ Let's add a simple property:
 
 Either the addition goes first, then the multiplication.
 So the :code:`age` should be 21 or 22.
-Let's check again with entremets :code:`cargo run no-transaction.mets`.
+Let's check again with entremets :code:`entremets no-transaction.mets`.
 This time the output is a little different:
 
 .. code-block:: text
