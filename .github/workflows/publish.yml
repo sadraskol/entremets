@@ -2,7 +2,7 @@ name: publish
 
 on:
   release:
-    types: [published]
+    types: [ published ]
 
 env:
   CARGO_TERM_COLOR: always
@@ -12,8 +12,8 @@ jobs:
     runs-on: ubuntu-latest
     environment: CI
     steps:
+      - env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
       - uses: actions/checkout@v3
-      - name: Build
-        run: cargo build --verbose
       - name: Run publish
         run: cargo publish
