@@ -1,4 +1,5 @@
 use crate::engine::Value;
+use crate::format::intersperse;
 use crate::parser::ParserErrorKind::Unexpected;
 use crate::scanner::{Scanner, ScannerError, Token, TokenKind};
 use std::fmt::Debug;
@@ -1062,13 +1063,7 @@ impl std::fmt::Display for SqlExpression {
 
                 f.write_str(") values ")?;
 
-                let mut iter = values.iter().peekable();
-                while let Some(value) = iter.next() {
-                    std::fmt::Display::fmt(&value, f)?;
-                    if iter.peek().is_some() {
-                        f.write_str(", ")?;
-                    }
-                }
+                intersperse(f, values, ",")?;
 
                 Ok(())
             }
@@ -1093,13 +1088,7 @@ impl std::fmt::Display for SqlExpression {
             SqlExpression::Tuple(values) => {
                 f.write_str("(")?;
 
-                let mut iter = values.iter().peekable();
-                while let Some(value) = iter.next() {
-                    std::fmt::Display::fmt(&value, f)?;
-                    if iter.peek().is_some() {
-                        f.write_str(", ")?;
-                    }
-                }
+                intersperse(f, values, ",")?;
 
                 f.write_str(")")
             }
@@ -1140,28 +1129,12 @@ impl std::fmt::Display for Expression {
             Expression::Integer(i) => std::fmt::Display::fmt(&i, f),
             Expression::Set(values) => {
                 f.write_str("{")?;
-
-                let mut iter = values.iter().peekable();
-                while let Some(value) = iter.next() {
-                    std::fmt::Display::fmt(&value, f)?;
-                    if iter.peek().is_some() {
-                        f.write_str(", ")?;
-                    }
-                }
-
+                intersperse(f, values, ",")?;
                 f.write_str("}")
             }
             Expression::Tuple(values) => {
                 f.write_str("(")?;
-
-                let mut iter = values.iter().peekable();
-                while let Some(value) = iter.next() {
-                    std::fmt::Display::fmt(&value, f)?;
-                    if iter.peek().is_some() {
-                        f.write_str(", ")?;
-                    }
-                }
-
+                intersperse(f, values, ",")?;
                 f.write_str(")")
             }
             Expression::Member { call_site, member } => {
@@ -1192,72 +1165,6 @@ impl std::fmt::Display for Statement {
 #[cfg(test)]
 mod test {
     use crate::parser::{Expression, Parser, SqlExpression, SqlOperator, Statement, Variable};
-
-    // #[test]
-    // fn parse_select_is_value() {
-    //     let mut parser =
-    //         Parser::new("eventually<select age from users where id = 1 is 11>\n".to_string());
-    //     parser.advance().unwrap();
-    //
-    //     let mut statements = vec![];
-    //     parser.statement(&mut statements).unwrap();
-    //     assert_eq!(
-    //         Statement::Eventually(Expression::Binary {
-    //             left: Box::new(Expression::Select {
-    //                 columns: vec![Variable {
-    //                     name: "age".to_string()
-    //                 }],
-    //                 from: Variable {
-    //                     name: "users".to_string()
-    //                 },
-    //                 condition: Some(Box::new(Expression::Binary {
-    //                     left: Box::new(Expression::Var(Variable {
-    //                         name: "id".to_string()
-    //                     })),
-    //                     operator: Operator::Equal,
-    //                     right: Box::new(Expression::Integer(1)),
-    //                 })),
-    //                 locking: false,
-    //             }),
-    //             operator: Operator::Is,
-    //             right: Box::new(Expression::Integer(11)),
-    //         }),
-    //         statements[0]
-    //     );
-    // }
-    //
-    // #[test]
-    // fn parse_select_in_value() {
-    //     let mut parser =
-    //         Parser::new("eventually<select age from users where id = 1 in {11}>\n".to_string());
-    //     parser.advance().unwrap();
-    //
-    //     let mut statements = vec![];
-    //     parser.statement(&mut statements).unwrap();
-    //     assert_eq!(
-    //         Statement::Eventually(Expression::Binary {
-    //             left: Box::new(Expression::Select {
-    //                 columns: vec![Variable {
-    //                     name: "age".to_string()
-    //                 }],
-    //                 from: Variable {
-    //                     name: "users".to_string()
-    //                 },
-    //                 condition: Some(Box::new(Expression::Binary {
-    //                     left: Box::new(Expression::Var(Variable {
-    //                         name: "id".to_string()
-    //                     })),
-    //                     operator: Operator::Equal,
-    //                     right: Box::new(Expression::Integer(1)),
-    //                 })),
-    //                 locking: false,
-    //             }),
-    //             operator: Operator::Included,
-    //             right: Box::new(Expression::Set(vec![Expression::Integer(11)])),
-    //         }),
-    //         statements[0]
-    //     );
-    // }
 
     #[test]
     fn parse_sql_query() {

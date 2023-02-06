@@ -77,8 +77,6 @@ pub enum TokenKind {
     LeftCarret,
     // >
     RightCarret,
-    // else
-    Else,
     // do
     Do,
     // end
@@ -280,7 +278,6 @@ impl Scanner {
             'e' => {
                 if self.current.index - self.start.index > 2 {
                     match self.source.chars().nth(self.start.index + 1).unwrap() {
-                        'l' => self.check_keyword(2, "se", TokenKind::Else),
                         'n' => self.check_keyword(2, "d", TokenKind::End),
                         'v' => self.check_keyword(2, "entually", TokenKind::Eventually),
                         _ => TokenKind::Identifier,

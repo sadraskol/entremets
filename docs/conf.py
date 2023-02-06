@@ -49,7 +49,7 @@ html_theme_path = guzzle_sphinx_theme.html_theme_path()
 html_theme = 'guzzle_sphinx_theme'
 
 html_theme_options = {
-        "project_nav_name": "Entremets",
+    "project_nav_name": "Entremets",
 }
 
 # Add any paths that contain custom static files (such as style sheets) here,

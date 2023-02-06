@@ -1,3 +1,4 @@
+use crate::format::intersperse;
 use crate::interpreter::{Interpreter, InterpreterError};
 use crate::parser::{Mets, Statement};
 use crate::sql_interpreter::{HashableRow, SqlDatabase, SqlEngineError, TransactionId};
@@ -39,26 +40,12 @@ impl std::fmt::Display for Value {
             Value::Integer(i) => std::fmt::Display::fmt(&i, f),
             Value::Set(set) => {
                 f.write_str("{")?;
-                let mut peekable = set.iter().peekable();
-                while let Some(i) = peekable.next() {
-                    std::fmt::Display::fmt(&i, f)?;
-                    if peekable.peek().is_some() {
-                        f.write_str(", ")?;
-                    }
-                }
-
+                intersperse(f, set, ",")?;
                 f.write_str("}")
             }
             Value::Tuple(tuple) => {
                 f.write_str("(")?;
-                let mut peekable = tuple.iter().peekable();
-                while let Some(i) = peekable.next() {
-                    std::fmt::Display::fmt(&i, f)?;
-                    if peekable.peek().is_some() {
-                        f.write_str(", ")?;
-                    }
-                }
-
+                intersperse(f, tuple, ",")?;
                 f.write_str(")")
             }
             Value::Tx(tx) => match tx.0 {
@@ -120,7 +107,7 @@ impl State {
         }
     }
 
-    fn hashable(&self) -> HashableState {
+    fn hash(&self) -> HashableState {
         HashableState {
             pc: self.pc.clone(),
             global: self.sql.hashable(),
@@ -180,10 +167,11 @@ fn private_model_checker(mets: &Mets) -> Res<Report> {
     let mut states_explored = 0;
 
     while let Some(mut state) = deq.pop_front() {
-        if visited.contains(&state.hashable()) {
+        let hashed_state = state.hash();
+        if visited.contains(&hashed_state) {
             continue;
         }
-        visited.insert(state.hashable());
+        visited.insert(hashed_state);
 
         let mut interpreter = Interpreter::new(&state);
 
@@ -219,21 +207,23 @@ fn private_model_checker(mets: &Mets) -> Res<Report> {
                 interpreter.idx = idx;
                 match interpreter.statement(&code[state.pc[idx]]) {
                     Ok(_) => {}
-                    Err(err) => return match err {
-                        InterpreterError::Unexpected(x) => {
-                            Err(CheckerError::RuntimeError(format!("{x:?}")))
+                    Err(err) => {
+                        return match err {
+                            InterpreterError::Unexpected(x) => {
+                                Err(CheckerError::RuntimeError(format!("{x:?}")))
+                            }
+                            InterpreterError::TypeError(x, y) => {
+                                Err(CheckerError::RuntimeError(format!("{x} not of type {y}")))
+                            }
+                            InterpreterError::SqlEngineError(SqlEngineError::RowLockedError) => {
+                                interpreter.reset();
+                                continue;
+                            }
+                            InterpreterError::SqlEngineError(x) => {
+                                Err(CheckerError::RuntimeError(format!("{x:?}")))
+                            }
                         }
-                        InterpreterError::TypeError(x, y) => {
-                            Err(CheckerError::RuntimeError(format!("{x} not of type {y}")))
-                        }
-                        InterpreterError::SqlEngineError(SqlEngineError::RowLockedError) => {
-                            interpreter.reset();
-                            continue;
-                        }
-                        InterpreterError::SqlEngineError(x) => {
-                            Err(CheckerError::RuntimeError(format!("{x:?}")))
-                        }
-                    },
+                    }
                 }
                 let mut new_state = interpreter.reset();
                 new_state.pc[idx] += 1;
@@ -288,7 +278,15 @@ fn init_state(mets: &Mets) -> Res<State> {
             .iter()
             .map(|_| ProcessState::Running)
             .collect(),
-        txs: mets.processes.iter().map(|_| TransactionInfo { id: TransactionId(usize::MAX), name: None, state: TransactionState::NotExisting, }).collect(),
+        txs: mets
+            .processes
+            .iter()
+            .map(|_| TransactionInfo {
+                id: TransactionId(usize::MAX),
+                name: None,
+                state: TransactionState::NotExisting,
+            })
+            .collect(),
         sql: SqlDatabase::new(),
         locals: HashMap::new(),
         log: vec![],

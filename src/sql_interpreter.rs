@@ -302,7 +302,6 @@ impl SqlDatabase {
         } else {
             Ok(Value::Nil)
         }
-
     }
 
     fn interpret_select(

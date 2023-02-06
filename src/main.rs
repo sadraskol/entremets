@@ -7,6 +7,7 @@ use std::env;
 use std::fs::read_to_string;
 
 mod engine;
+mod format;
 mod interpreter;
 mod parser;
 mod reporter;
