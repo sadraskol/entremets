@@ -9,9 +9,8 @@ env:
 
 jobs:
   build:
-
     runs-on: ubuntu-latest
-
+    environment: CI
     steps:
       - uses: actions/checkout@v3
       - name: Build
