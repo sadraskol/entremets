@@ -215,7 +215,7 @@ fn private_model_checker(mets: &Mets) -> Res<Report> {
                             InterpreterError::TypeError(x, y) => {
                                 Err(CheckerError::RuntimeError(format!("{x} not of type {y}")))
                             }
-                            InterpreterError::SqlEngineError(SqlEngineError::RowLockedError) => {
+                            InterpreterError::SqlEngineError(SqlEngineError::RowLockedError(_)) => {
                                 interpreter.reset();
                                 continue;
                             }

@@ -42,14 +42,14 @@ end
 process do
     begin read_committed
     let t1_age := `select age from users where id = 1`
-    `update users set age := t1_age + 1 where id = 1`
+    `update users set age := $t1_age + 1 where id = 1`
     commit
 end
 
 process do
     begin read_committed
     let t2_age := `select age from users where id = 1`
-    `update users set age := t2_age * 2 where id = 1`
+    `update users set age := $t2_age * 2 where id = 1`
     commit
 end
 ```
@@ -66,7 +66,7 @@ Now lets run this mets (mets are the specification, entremets finds the anomalie
 
 ```
 > entremets lost_update.mets
-Following property was violated: eventually<select age from users where id = 1 in {21, 22}>
+Following property was violated: eventually<`select age from users where id = 1` in {21, 22}>
 The following counter example was found:
 ...
 ```
