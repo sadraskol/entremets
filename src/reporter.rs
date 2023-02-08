@@ -28,15 +28,15 @@ pub fn summary(mets: &Mets, report: &Report) -> String {
 
         for trace in &traces[1..] {
             let trace = trace.borrow();
-            let (index, _) = (trace.pc.iter().zip(&last_trace.pc))
+            if let Some((index, _)) = (trace.pc.iter().zip(&last_trace.pc))
                 .enumerate()
-                .find(|(_i, (a, b))| a != b)
-                .expect("no pc changed in between states");
-            x.push_str(&format!(
-                "Process {}: {}\n",
-                index,
-                mets.processes[index][trace.pc[index] - 1]
-            ));
+                .find(|(_i, (a, b))| a != b) {
+                x.push_str(&format!(
+                    "Process {}: {}\n",
+                    index,
+                    mets.processes[index][trace.pc[index] - 1]
+                ));
+            }
             if !trace.locals.is_empty() {
                 x.push_str(&format!("Local State {:?}\n", trace.locals));
             }

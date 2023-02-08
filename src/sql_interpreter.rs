@@ -14,11 +14,15 @@ pub struct Row(pub HashMap<String, Value>, RowId);
 
 impl Row {
     pub fn to_value(&self, columns: &[String]) -> Value {
-        let mut res = vec![];
-        for col in columns {
-            res.push(self.0.get(col).unwrap().clone())
+        if columns.len() == 1 {
+            return self.0.get(&columns[0]).unwrap().clone()
+        } else {
+            let mut res = vec![];
+            for col in columns {
+                res.push(self.0.get(col).unwrap().clone())
+            }
+            Value::Tuple(res)
         }
-        Value::Tuple(res)
     }
 
     pub fn keys(&self) -> Vec<String> {
@@ -113,7 +117,7 @@ impl TransactionId {
     }
 }
 
-#[derive(PartialEq, Debug, Clone, Copy)]
+#[derive(PartialEq, Debug, Clone, Copy, Hash, Eq)]
 pub struct RowId(usize);
 
 impl RowId {
@@ -357,14 +361,7 @@ impl SqlDatabase {
         }
 
         if res.len() == 1 {
-            let row = if let Value::Tuple(x) = &res[0] {
-                x
-            } else {
-                panic!("expected to be a tuple")
-            };
-            if row.len() == 1 {
-                return Ok(row[0].clone());
-            }
+            return Ok(res[0].clone());
         }
 
         Ok(Value::Set(res))
@@ -424,7 +421,7 @@ impl SqlDatabase {
                 Changes::Update(table, row, col, value) => {
                     let table = self.tables.entry(table.clone()).or_default();
                     for r in table {
-                        if r == &row {
+                        if r.1 == row.1 {
                             r.0.insert(col.clone(), value.clone());
                         }
                     }
@@ -455,7 +452,7 @@ impl SqlDatabase {
                     } else {
                         let table = self.tables.entry(table).or_default();
                         for r in table {
-                            if r == &row {
+                            if r.1 == row.1 {
                                 r.0.insert(name.clone(), value.clone());
                             }
                         }

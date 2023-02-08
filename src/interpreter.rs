@@ -244,11 +244,6 @@ impl Interpreter {
                 let right = self.interpret(right)?;
                 Ok(Value::Bool(left == right))
             }
-            Operator::Is => {
-                let left = self.interpret(left)?;
-                let right = self.interpret(right)?;
-                Ok(Value::Bool(left == right))
-            }
             Operator::LessEqual => {
                 let left = self.assert_integer(left)?;
                 let right = self.assert_integer(right)?;

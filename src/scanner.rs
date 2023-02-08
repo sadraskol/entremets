@@ -107,8 +107,6 @@ pub enum TokenKind {
     For,
     // set
     Set,
-    // is
-    Is,
     // in
     In,
     // and
@@ -299,7 +297,6 @@ impl Scanner {
             }
             'i' => match self.current.index - self.start.index {
                 2 => match self.source.chars().nth(self.start.index + 1).unwrap() {
-                    's' => self.check_keyword(2, "", TokenKind::Is),
                     'n' => self.check_keyword(2, "", TokenKind::In),
                     _ => TokenKind::Identifier,
                 },

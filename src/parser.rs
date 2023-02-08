@@ -96,7 +96,6 @@ pub enum Operator {
     Multiply,
     Rem,
     Equal,
-    Is,
     LessEqual,
     Less,
     Included,
@@ -640,28 +639,13 @@ impl Parser {
     }
 
     fn included(&mut self) -> Res<Expression> {
-        let mut expr = self.is()?;
-
-        if self.matches(TokenKind::In)? {
-            let right = self.is()?;
-            expr = Expression::Binary {
-                left: Box::new(expr),
-                operator: Operator::Included,
-                right: Box::new(right),
-            };
-        }
-
-        Ok(expr)
-    }
-
-    fn is(&mut self) -> Res<Expression> {
         let mut expr = self.equality()?;
 
-        if self.matches(TokenKind::Is)? {
+        if self.matches(TokenKind::In)? {
             let right = self.equality()?;
             expr = Expression::Binary {
                 left: Box::new(expr),
-                operator: Operator::Is,
+                operator: Operator::Included,
                 right: Box::new(right),
             };
         }
@@ -1113,7 +1097,6 @@ impl std::fmt::Display for Expression {
                     Operator::Multiply => "*",
                     Operator::Rem => "%",
                     Operator::Equal => "=",
-                    Operator::Is => "is",
                     Operator::LessEqual => "<=",
                     Operator::Less => "<",
                     Operator::Included => "in",

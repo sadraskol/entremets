@@ -63,6 +63,7 @@ impl std::fmt::Display for Value {
 #[derive(Hash, Eq, PartialEq, Debug, Clone)]
 struct HashableState {
     pc: Vec<usize>,
+    state: Vec<ProcessState>,
     global: Vec<(String, Vec<HashableRow>)>,
     locals: Vec<(String, Value)>,
     eventually: Vec<(usize, bool)>,
@@ -75,7 +76,7 @@ pub struct Trace {
     pub locals: HashMap<String, Value>,
 }
 
-#[derive(PartialEq, Debug, Clone)]
+#[derive(PartialEq, Debug, Clone, Hash, Eq)]
 pub enum ProcessState {
     Running,
     Latching,
@@ -106,6 +107,7 @@ impl State {
         HashableState {
             pc: self.pc.clone(),
             global: self.sql.hash(),
+            state: self.state.clone(),
             locals: self
                 .locals
                 .iter()
@@ -220,6 +222,8 @@ fn private_model_checker(mets: &Mets) -> Res<Report> {
                 let offset = interpreter.statement(&code[state.borrow().pc[idx]])?;
                 let mut new_state = interpreter.next_state();
                 new_state.pc[idx] += offset;
+
+                // TODO check for deadlocks
 
                 if new_state.pc[idx] == code.len() {
                     new_state.state[idx] = ProcessState::Finished
