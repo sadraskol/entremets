@@ -29,7 +29,7 @@ impl Row {
         self.0.values().cloned().collect()
     }
 
-    fn hashable(self) -> HashableRow {
+    fn hash(self) -> HashableRow {
         let (keys, values): (Vec<String>, Vec<Value>) = self.0.into_iter().unzip();
         HashableRow { keys, values }
     }
@@ -91,12 +91,12 @@ pub struct SqlDatabase {
 }
 
 impl SqlDatabase {
-    pub fn hashable(&self) -> Vec<(String, Vec<HashableRow>)> {
+    pub fn hash(&self) -> Vec<(String, Vec<HashableRow>)> {
         let mut res = vec![];
         for (name, rows) in &self.tables {
             res.push((
                 name.clone(),
-                rows.iter().map(|row| row.clone().hashable()).collect(),
+                rows.iter().map(|row| row.clone().hash()).collect(),
             ));
         }
         res

@@ -1,9 +1,11 @@
+use std::cell::RefCell;
 use crate::format::intersperse;
 use crate::interpreter::{Interpreter, InterpreterError};
 use crate::parser::{Mets, Statement};
-use crate::sql_interpreter::{HashableRow, SqlDatabase, SqlEngineError, TransactionId};
-use std::collections::{HashMap, HashSet, VecDeque};
+use crate::sql_interpreter::{HashableRow, RowId, SqlDatabase, TransactionId};
+use std::collections::{HashMap, VecDeque};
 use std::fmt::Formatter;
+use std::rc::Rc;
 
 #[derive(Hash, Eq, PartialEq, Debug, Clone)]
 pub enum TransactionState {
@@ -76,7 +78,8 @@ pub struct Trace {
 #[derive(PartialEq, Debug, Clone)]
 pub enum ProcessState {
     Running,
-    Waiting,
+    Latching,
+    Locked(RowId),
     Finished,
 }
 
@@ -89,28 +92,20 @@ pub struct TransactionInfo {
 
 #[derive(PartialEq, Debug, Clone)]
 pub struct State {
-    pc: Vec<usize>,
+    pub pc: Vec<usize>,
     pub state: Vec<ProcessState>,
     pub txs: Vec<TransactionInfo>,
     pub sql: SqlDatabase,
     pub locals: HashMap<String, Value>,
-    log: Vec<Trace>,
+    pub ancestors: Vec<RcState>,
     eventually: HashMap<usize, bool>,
 }
 
 impl State {
-    fn trace(&self) -> Trace {
-        Trace {
-            pc: self.pc.clone(),
-            sql: self.sql.clone(),
-            locals: self.locals.clone(),
-        }
-    }
-
     fn hash(&self) -> HashableState {
         HashableState {
             pc: self.pc.clone(),
-            global: self.sql.hashable(),
+            global: self.sql.hash(),
             locals: self
                 .locals
                 .iter()
@@ -124,7 +119,7 @@ impl State {
 #[derive(PartialEq, Debug, Clone)]
 pub struct Violation {
     pub property: Statement,
-    pub log: Vec<Trace>,
+    pub state: RcState,
 }
 
 pub struct Report {
@@ -134,7 +129,6 @@ pub struct Report {
 
 #[derive(Debug)]
 pub enum CheckerError {
-    RuntimeError(String),
     InterpreterError(InterpreterError),
 }
 
@@ -158,38 +152,45 @@ pub enum PropertyCheck {
     Eventually(bool),
 }
 
+pub type RcState = Rc<RefCell<State>>;
+
+fn rc_state(state: State) -> RcState {
+    Rc::new(RefCell::new(state))
+}
+
 fn private_model_checker(mets: &Mets) -> Res<Report> {
     let init_state = init_state(mets)?;
 
-    let mut deq = VecDeque::from([init_state]);
-    let mut visited = HashSet::new();
+    let mut deq = VecDeque::from([rc_state(init_state)]);
+    let mut visited: HashMap<HashableState, RcState> = HashMap::new();
 
     let mut states_explored = 0;
 
-    while let Some(mut state) = deq.pop_front() {
-        let hashed_state = state.hash();
-        if visited.contains(&hashed_state) {
+    while let Some(state) = deq.pop_front() {
+        let hashed_state = RefCell::borrow(&state).hash();
+        if let Some(existing_state) = visited.get_mut(&hashed_state) {
+            let mut st = RefCell::borrow_mut(existing_state);
+            st.ancestors.extend_from_slice(&RefCell::borrow(&state).ancestors);
             continue;
         }
-        visited.insert(hashed_state);
+        visited.insert(hashed_state, state.clone());
 
-        let mut interpreter = Interpreter::new(&state);
+        let mut interpreter = Interpreter::new(state.clone());
 
         for (id, property) in mets.properties.iter().enumerate() {
             let res = interpreter.check_property(property)?;
             match res {
                 PropertyCheck::Always(false) => {
-                    let mut log = state.log.clone();
-                    log.push(state.trace());
                     return Ok(Report {
                         states_explored,
                         violation: Some(Violation {
                             property: property.clone(),
-                            log,
+                            state,
                         }),
                     });
                 }
                 PropertyCheck::Eventually(res) => {
+                    let mut state = RefCell::borrow_mut(&state);
                     let existing = state.eventually.entry(id).or_insert(false);
                     if !*existing && res {
                         *existing = res;
@@ -203,30 +204,11 @@ fn private_model_checker(mets: &Mets) -> Res<Report> {
 
         let mut is_final = true;
         for (idx, code) in mets.processes.iter().enumerate() {
-            if state.state[idx] == ProcessState::Running {
+            if RefCell::borrow(&state).state[idx] == ProcessState::Running {
                 interpreter.idx = idx;
-                match interpreter.statement(&code[state.pc[idx]]) {
-                    Ok(_) => {}
-                    Err(err) => {
-                        return match err {
-                            InterpreterError::Unexpected(x) => {
-                                Err(CheckerError::RuntimeError(format!("{x:?}")))
-                            }
-                            InterpreterError::TypeError(x, y) => {
-                                Err(CheckerError::RuntimeError(format!("{x} not of type {y}")))
-                            }
-                            InterpreterError::SqlEngineError(SqlEngineError::RowLockedError(_)) => {
-                                interpreter.reset();
-                                continue;
-                            }
-                            InterpreterError::SqlEngineError(x) => {
-                                Err(CheckerError::RuntimeError(format!("{x:?}")))
-                            }
-                        }
-                    }
-                }
-                let mut new_state = interpreter.reset();
-                new_state.pc[idx] += 1;
+                let offset = interpreter.statement(&code[RefCell::borrow(&state).pc[idx]])?;
+                let mut new_state = interpreter.next_state();
+                new_state.pc[idx] += offset;
 
                 if new_state.pc[idx] == code.len() {
                     new_state.state[idx] = ProcessState::Finished
@@ -234,34 +216,32 @@ fn private_model_checker(mets: &Mets) -> Res<Report> {
                 if new_state
                     .state
                     .iter()
-                    .all(|w| w == &ProcessState::Waiting || w == &ProcessState::Finished)
+                    .all(|w| w == &ProcessState::Latching || w == &ProcessState::Finished)
                 {
                     for w in new_state.state.iter_mut() {
-                        if w == &ProcessState::Waiting {
+                        if w == &ProcessState::Latching {
                             *w = ProcessState::Running;
                         }
                     }
                 }
 
-                new_state.log.push(state.trace());
-                deq.push_back(new_state);
+                new_state.ancestors = vec![state.clone()];
+                deq.push_back(rc_state(new_state));
                 is_final = false;
             }
         }
 
         if is_final {
-            if let Some((id, _)) = state.eventually.iter().find(|(_, b)| !**b) {
-                let mut log = state.log.clone();
-                log.push(state.trace());
+            if let Some((id, _)) = RefCell::borrow(&state).eventually.iter().find(|(_, b)| !**b) {
                 return Ok(Report {
                     states_explored,
                     violation: Some(Violation {
                         property: mets.properties[*id].clone(),
-                        log,
+                        state: state.clone(),
                     }),
                 });
-            }
-        }
+            };
+        };
     }
 
     Ok(Report {
@@ -289,12 +269,12 @@ fn init_state(mets: &Mets) -> Res<State> {
             .collect(),
         sql: SqlDatabase::new(),
         locals: HashMap::new(),
-        log: vec![],
+        ancestors: vec![],
         eventually: HashMap::new(),
     };
-    let mut interpreter = Interpreter::new(&init_state);
+    let mut interpreter = Interpreter::new(rc_state(init_state));
     for statement in &mets.init {
         interpreter.statement(statement)?;
     }
-    Ok(interpreter.reset())
+    Ok(interpreter.next_state())
 }

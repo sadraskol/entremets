@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use crate::engine::Report;
 use crate::parser::Mets;
 use crate::sql_interpreter::SqlDatabase;
@@ -7,13 +8,27 @@ pub fn summary(mets: &Mets, report: &Report) -> String {
         let mut x = format!("Following property was violated: {}\n", violation.property);
         x.push_str("The following counter example was found:\n");
 
-        let mut last_trace = &violation.log[0];
+        let mut traces = vec![];
+        let mut current = violation.state.clone();
+        loop {
+            traces.push(current.clone());
+            let x = if let Some(x) = RefCell::borrow(&current).ancestors.get(0) {
+                x.clone()
+            } else {
+                break;
+            };
+            current = x;
+        }
+        traces.reverse();
+
+        let mut last_trace = RefCell::borrow(&traces[0]);
         if !last_trace.locals.is_empty() {
             x.push_str(&format!("Local State {:?}\n", last_trace.locals));
         }
         x.push_str(&sql_summary(&last_trace.sql));
 
-        for trace in &violation.log[1..] {
+        for trace in &traces[1..] {
+            let trace = RefCell::borrow(trace);
             let (index, _) = (trace.pc.iter().zip(&last_trace.pc))
                 .enumerate()
                 .find(|(_i, (a, b))| a != b)

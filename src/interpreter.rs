@@ -1,4 +1,5 @@
-use crate::engine::{ProcessState, PropertyCheck, State, Transaction, TransactionState, Value};
+use std::cell::RefCell;
+use crate::engine::{ProcessState, PropertyCheck, RcState, State, Transaction, TransactionState, Value};
 use crate::interpreter::InterpreterError::{TypeError, Unexpected};
 use crate::parser::{Expression, Operator, SqlExpression, Statement};
 use crate::sql_interpreter::{SqlEngineError, TransactionId};
@@ -17,25 +18,26 @@ impl From<SqlEngineError> for InterpreterError {
 }
 
 type Res<T> = Result<T, InterpreterError>;
-type Unit = Res<()>;
 
 pub struct Interpreter {
     pub idx: usize,
-    state: State,
+    state: RcState,
     next_state: State,
 }
 
 impl Interpreter {
-    pub fn new(state: &State) -> Self {
+    pub fn new(state: RcState) -> Self {
         Interpreter {
             idx: 0,
             state: state.clone(),
-            next_state: state.clone(),
+            next_state: RefCell::borrow(&state).clone(),
         }
     }
 
-    pub fn reset(&mut self) -> State {
-        std::mem::replace(&mut self.next_state, self.state.clone())
+    pub fn next_state(&mut self) -> State {
+        let next_state = self.next_state.clone();
+        self.next_state = RefCell::borrow(&self.state).clone();
+        next_state
     }
 
     pub fn check_property(&mut self, property: &Statement) -> Res<PropertyCheck> {
@@ -56,9 +58,8 @@ impl Interpreter {
         }
     }
 
-    pub fn statement(&mut self, statement: &Statement) -> Unit {
+    pub fn statement(&mut self, statement: &Statement) -> Res<usize> {
         match self.priv_statement(statement) {
-            Ok(_) => Ok(()),
             Err(InterpreterError::SqlEngineError(SqlEngineError::TransactionAborted)) => {
                 let info = &self.next_state.txs[self.idx];
                 self.next_state.sql.abort(&info.id);
@@ -70,13 +71,13 @@ impl Interpreter {
                     );
                 }
                 self.next_state.txs[self.idx].state = TransactionState::Aborted;
-                Ok(())
+                Ok(1)
             }
-            Err(err) => Err(err),
+            other => other,
         }
     }
 
-    fn priv_statement(&mut self, statement: &Statement) -> Unit {
+    fn priv_statement(&mut self, statement: &Statement) -> Res<usize> {
         match statement {
             Statement::Begin(isolation, tx_name) => {
                 self.next_state.txs[self.idx].name = tx_name.as_ref().map(|v| v.name.clone());
@@ -117,14 +118,21 @@ impl Interpreter {
                 self.next_state.txs[self.idx].state = TransactionState::Aborted;
             }
             Statement::Expression(expr) => {
-                self.interpret(expr)?;
+                match self.interpret(expr) {
+                    Ok(_) => {}
+                    Err(InterpreterError::SqlEngineError(SqlEngineError::RowLockedError(row_id))) => {
+                        self.next_state.state[self.idx] = ProcessState::Locked(row_id);
+                        return Ok(0);
+                    }
+                    Err(err) => return Err(err),
+                }
             }
             Statement::Latch => {
-                self.next_state.state[self.idx] = ProcessState::Waiting;
+                self.next_state.state[self.idx] = ProcessState::Latching;
             }
             _ => panic!("Unexpected statement in process: {statement:?}"),
         };
-        Ok(())
+        Ok(1)
     }
 
     fn interpret(&mut self, expression: &Expression) -> Res<Value> {
@@ -146,7 +154,7 @@ impl Interpreter {
                 right,
             } => self.interpret_binary(left, operator, right),
             Expression::Var(variable) => Ok(self
-                .state
+                .state.borrow()
                 .locals
                 .get(&variable.name)
                 .cloned()
@@ -341,7 +349,7 @@ impl Interpreter {
                 Box::new(self.reify_up_variable(expr)?),
             )),
             SqlExpression::UpVariable(variable) => Ok(SqlExpression::Value(
-                self.state
+                self.state.borrow()
                     .locals
                     .get(&variable.name)
                     .cloned()
@@ -352,8 +360,8 @@ impl Interpreter {
     }
 
     fn running_tx(&self) -> Option<TransactionId> {
-        match &self.state.txs[self.idx].state {
-            TransactionState::Running => Some(self.state.txs[self.idx].id),
+        match &self.state.borrow().txs[self.idx].state {
+            TransactionState::Running => Some(self.state.borrow().txs[self.idx].id),
             _ => None,
         }
     }
