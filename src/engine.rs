@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::cell::{Ref, RefCell, RefMut};
 use crate::format::intersperse;
 use crate::interpreter::{Interpreter, InterpreterError};
 use crate::parser::{Mets, Statement};
@@ -117,6 +117,23 @@ impl State {
 }
 
 #[derive(PartialEq, Debug, Clone)]
+pub struct RcState(Rc<RefCell<State>>);
+
+impl RcState {
+    fn new(state: State) -> RcState {
+        RcState(Rc::new(RefCell::new(state)))
+    }
+
+    pub fn borrow(&self) -> Ref<'_, State> {
+        RefCell::borrow(&self.0)
+    }
+
+    pub fn borrow_mut(&self) -> RefMut<'_, State> {
+        RefCell::borrow_mut(&self.0)
+    }
+}
+
+#[derive(PartialEq, Debug, Clone)]
 pub struct Violation {
     pub property: Statement,
     pub state: RcState,
@@ -152,25 +169,19 @@ pub enum PropertyCheck {
     Eventually(bool),
 }
 
-pub type RcState = Rc<RefCell<State>>;
-
-fn rc_state(state: State) -> RcState {
-    Rc::new(RefCell::new(state))
-}
-
 fn private_model_checker(mets: &Mets) -> Res<Report> {
     let init_state = init_state(mets)?;
 
-    let mut deq = VecDeque::from([rc_state(init_state)]);
+    let mut deq = VecDeque::from([RcState::new(init_state)]);
     let mut visited: HashMap<HashableState, RcState> = HashMap::new();
 
     let mut states_explored = 0;
 
     while let Some(state) = deq.pop_front() {
-        let hashed_state = RefCell::borrow(&state).hash();
+        let hashed_state = state.borrow().hash();
         if let Some(existing_state) = visited.get_mut(&hashed_state) {
-            let mut st = RefCell::borrow_mut(existing_state);
-            st.ancestors.extend_from_slice(&RefCell::borrow(&state).ancestors);
+            let mut st = existing_state.borrow_mut();
+            st.ancestors.extend_from_slice(&state.borrow().ancestors);
             continue;
         }
         visited.insert(hashed_state, state.clone());
@@ -190,7 +201,7 @@ fn private_model_checker(mets: &Mets) -> Res<Report> {
                     });
                 }
                 PropertyCheck::Eventually(res) => {
-                    let mut state = RefCell::borrow_mut(&state);
+                    let mut state = state.borrow_mut();
                     let existing = state.eventually.entry(id).or_insert(false);
                     if !*existing && res {
                         *existing = res;
@@ -204,9 +215,9 @@ fn private_model_checker(mets: &Mets) -> Res<Report> {
 
         let mut is_final = true;
         for (idx, code) in mets.processes.iter().enumerate() {
-            if RefCell::borrow(&state).state[idx] == ProcessState::Running {
+            if state.borrow().state[idx] == ProcessState::Running {
                 interpreter.idx = idx;
-                let offset = interpreter.statement(&code[RefCell::borrow(&state).pc[idx]])?;
+                let offset = interpreter.statement(&code[state.borrow().pc[idx]])?;
                 let mut new_state = interpreter.next_state();
                 new_state.pc[idx] += offset;
 
@@ -226,13 +237,13 @@ fn private_model_checker(mets: &Mets) -> Res<Report> {
                 }
 
                 new_state.ancestors = vec![state.clone()];
-                deq.push_back(rc_state(new_state));
+                deq.push_back(RcState::new(new_state));
                 is_final = false;
             }
         }
 
         if is_final {
-            if let Some((id, _)) = RefCell::borrow(&state).eventually.iter().find(|(_, b)| !**b) {
+            if let Some((id, _)) = state.borrow().eventually.iter().find(|(_, b)| !**b) {
                 return Ok(Report {
                     states_explored,
                     violation: Some(Violation {
@@ -272,7 +283,7 @@ fn init_state(mets: &Mets) -> Res<State> {
         ancestors: vec![],
         eventually: HashMap::new(),
     };
-    let mut interpreter = Interpreter::new(rc_state(init_state));
+    let mut interpreter = Interpreter::new(RcState::new(init_state));
     for statement in &mets.init {
         interpreter.statement(statement)?;
     }

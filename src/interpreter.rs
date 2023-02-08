@@ -1,4 +1,3 @@
-use std::cell::RefCell;
 use crate::engine::{ProcessState, PropertyCheck, RcState, State, Transaction, TransactionState, Value};
 use crate::interpreter::InterpreterError::{TypeError, Unexpected};
 use crate::parser::{Expression, Operator, SqlExpression, Statement};
@@ -30,13 +29,13 @@ impl Interpreter {
         Interpreter {
             idx: 0,
             state: state.clone(),
-            next_state: RefCell::borrow(&state).clone(),
+            next_state: state.borrow().clone(),
         }
     }
 
     pub fn next_state(&mut self) -> State {
         let next_state = self.next_state.clone();
-        self.next_state = RefCell::borrow(&self.state).clone();
+        self.next_state = self.state.borrow().clone();
         next_state
     }
 
