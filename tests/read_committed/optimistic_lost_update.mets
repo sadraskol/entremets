@@ -18,6 +18,6 @@ end
 
 property = eventually<
  or tx1.committed and tx2.committed and `select age from users where id = 1` in {21, 22}
- or tx1.committed and tx2.aborted and `select age from users where id = 1` is 11
- or tx1.aborted and tx2.committed and `select age from users where id = 1` is 20
+ or tx1.committed and tx2.aborted and `select age from users where id = 1` = 11
+ or tx1.aborted and tx2.committed and `select age from users where id = 1` = 20
 >

@@ -1,8 +1,8 @@
-use std::cell::{Ref, RefCell, RefMut};
 use crate::format::intersperse;
 use crate::interpreter::{Interpreter, InterpreterError};
 use crate::parser::{Mets, Statement};
 use crate::sql_interpreter::{HashableRow, RowId, SqlDatabase, TransactionId};
+use std::cell::{Ref, RefCell, RefMut};
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Formatter;
 use std::rc::Rc;
@@ -228,17 +228,8 @@ fn private_model_checker(mets: &Mets) -> Res<Report> {
                 if new_state.pc[idx] == code.len() {
                     new_state.state[idx] = ProcessState::Finished
                 }
-                if new_state
-                    .state
-                    .iter()
-                    .all(|w| w == &ProcessState::Latching || w == &ProcessState::Finished)
-                {
-                    for w in new_state.state.iter_mut() {
-                        if w == &ProcessState::Latching {
-                            *w = ProcessState::Running;
-                        }
-                    }
-                }
+                unlock_locks(&mut new_state);
+                unlock_latches(&mut new_state);
 
                 new_state.ancestors = vec![state.clone()];
                 deq.push_back(RcState::new(new_state));
@@ -263,6 +254,39 @@ fn private_model_checker(mets: &Mets) -> Res<Report> {
         states_explored,
         violation: None,
     })
+}
+
+fn unlock_locks(new_state: &mut State) {
+    let mut unlocks = vec![];
+    'outer: for (i, s) in new_state.state.iter().enumerate() {
+        if let ProcessState::Locked(rid) = &s {
+            for context in new_state.sql.transactions.values() {
+                if context.locks.contains(rid) {
+                    continue 'outer;
+                }
+            }
+
+            unlocks.push(i);
+        }
+    }
+
+    for unlock in unlocks {
+        new_state.state[unlock] = ProcessState::Running;
+    }
+}
+
+fn unlock_latches(new_state: &mut State) {
+    if new_state
+        .state
+        .iter()
+        .all(|w| w == &ProcessState::Latching || w == &ProcessState::Finished)
+    {
+        for w in new_state.state.iter_mut() {
+            if w == &ProcessState::Latching {
+                *w = ProcessState::Running;
+            }
+        }
+    }
 }
 
 fn init_state(mets: &Mets) -> Res<State> {

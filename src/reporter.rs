@@ -30,7 +30,8 @@ pub fn summary(mets: &Mets, report: &Report) -> String {
             let trace = trace.borrow();
             if let Some((index, _)) = (trace.pc.iter().zip(&last_trace.pc))
                 .enumerate()
-                .find(|(_i, (a, b))| a != b) {
+                .find(|(_i, (a, b))| a != b)
+            {
                 x.push_str(&format!(
                     "Process {}: {}\n",
                     index,

@@ -1,4 +1,6 @@
-use crate::engine::{ProcessState, PropertyCheck, RcState, State, Transaction, TransactionState, Value};
+use crate::engine::{
+    ProcessState, PropertyCheck, RcState, State, Transaction, TransactionState, Value,
+};
 use crate::interpreter::InterpreterError::{TypeError, Unexpected};
 use crate::parser::{Expression, Operator, SqlExpression, Statement};
 use crate::sql_interpreter::{SqlEngineError, TransactionId};
@@ -116,16 +118,14 @@ impl Interpreter {
                 }
                 self.next_state.txs[self.idx].state = TransactionState::Aborted;
             }
-            Statement::Expression(expr) => {
-                match self.interpret(expr) {
-                    Ok(_) => {}
-                    Err(InterpreterError::SqlEngineError(SqlEngineError::RowLockedError(row_id))) => {
-                        self.next_state.state[self.idx] = ProcessState::Locked(row_id);
-                        return Ok(0);
-                    }
-                    Err(err) => return Err(err),
+            Statement::Expression(expr) => match self.interpret(expr) {
+                Ok(_) => {}
+                Err(InterpreterError::SqlEngineError(SqlEngineError::RowLockedError(row_id))) => {
+                    self.next_state.state[self.idx] = ProcessState::Locked(row_id);
+                    return Ok(0);
                 }
-            }
+                Err(err) => return Err(err),
+            },
             Statement::Latch => {
                 self.next_state.state[self.idx] = ProcessState::Latching;
             }
@@ -153,7 +153,8 @@ impl Interpreter {
                 right,
             } => self.interpret_binary(left, operator, right),
             Expression::Var(variable) => Ok(self
-                .state.borrow()
+                .state
+                .borrow()
                 .locals
                 .get(&variable.name)
                 .cloned()
@@ -343,7 +344,8 @@ impl Interpreter {
                 Box::new(self.reify_up_variable(expr)?),
             )),
             SqlExpression::UpVariable(variable) => Ok(SqlExpression::Value(
-                self.state.borrow()
+                self.state
+                    .borrow()
                     .locals
                     .get(&variable.name)
                     .cloned()
