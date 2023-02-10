@@ -1,4 +1,4 @@
-Finding deadlocks
+Deadlocks detection
 ==================
 
 Sql engine detect deadlocks and kills a transaction to break the cycle.
