@@ -1,7 +1,8 @@
+use std::collections::HashMap;
+
 use crate::engine::Value;
 use crate::parser::{IsolationLevel, SqlExpression, SqlOperator, Variable};
 use crate::sql_interpreter::SqlEngineError::{SqlTypeError, UnknownVariable};
-use std::collections::HashMap;
 
 #[derive(Hash, Eq, PartialEq, Debug, Clone)]
 pub struct HashableRow {
@@ -191,6 +192,13 @@ impl SqlDatabase {
             }
             SqlExpression::UpVariable(_) => panic!("UpVariable should not be interpreted directly"),
             SqlExpression::Value(value) => Ok(value.clone()),
+            SqlExpression::Set(members) => {
+                let mut res = vec![];
+                for member in members {
+                    res.push(self.interpret(member)?);
+                }
+                Ok(Value::Set(res))
+            }
         }
     }
 
@@ -225,6 +233,11 @@ impl SqlDatabase {
                 let left = self.assert_bool(left)?;
                 let right = self.assert_bool(right)?;
                 Ok(Value::Bool(left && right))
+            }
+            SqlOperator::In => {
+                let left = self.interpret(left)?;
+                let right = self.assert_set(right)?;
+                Ok(Value::Bool(right.contains(&left)))
             }
         }
     }
@@ -370,6 +383,14 @@ impl SqlDatabase {
             Ok(value)
         } else {
             Err(SqlTypeError(expr.clone(), "tuple".to_string()))
+        }
+    }
+
+    fn assert_set(&mut self, expr: &SqlExpression) -> Res<Vec<Value>> {
+        if let Value::Set(value) = self.interpret(expr)? {
+            Ok(value)
+        } else {
+            Err(SqlTypeError(expr.clone(), "set".to_string()))
         }
     }
 

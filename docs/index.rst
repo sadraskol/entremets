@@ -15,4 +15,5 @@ Entremets
    :caption: Contents:
 
    tutorial
+   deadlocks
    background

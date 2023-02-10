@@ -1,12 +1,13 @@
-use crate::engine::Value;
-use crate::format::intersperse;
-use crate::parser::ParserErrorKind::Unexpected;
-use crate::scanner::{Scanner, ScannerError, Token, TokenKind};
 use std::fmt::Debug;
 use std::fmt::Formatter;
 use std::mem;
 use std::num::ParseIntError;
 use std::str::FromStr;
+
+use crate::engine::Value;
+use crate::format::intersperse;
+use crate::parser::ParserErrorKind::Unexpected;
+use crate::scanner::{Scanner, ScannerError, Token, TokenKind};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Statement {
@@ -39,6 +40,12 @@ pub struct Variable {
     pub name: String,
 }
 
+impl std::fmt::Display for Variable {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.name)
+    }
+}
+
 #[derive(PartialEq, Debug, Clone)]
 pub enum SqlExpression {
     Select {
@@ -64,6 +71,7 @@ pub enum SqlExpression {
     },
     Tuple(Vec<SqlExpression>),
     Assignment(Variable, Box<SqlExpression>),
+    Set(Vec<SqlExpression>),
     Var(Variable),
     Integer(i16),
     UpVariable(Variable),
@@ -109,6 +117,7 @@ pub enum SqlOperator {
     Multiply,
     Rem,
     Equal,
+    In,
     And,
 }
 
@@ -562,13 +571,28 @@ impl Parser {
     }
 
     fn sql_equality(&mut self) -> Res<SqlExpression> {
-        let mut expr = self.sql_factor()?;
+        let mut expr = self.sql_in()?;
 
         if self.matches_forward(TokenKind::Equal)? {
-            let right = self.sql_factor()?;
+            let right = self.sql_in()?;
             expr = SqlExpression::Binary {
                 left: Box::new(expr),
                 operator: SqlOperator::Equal,
+                right: Box::new(right),
+            };
+        }
+
+        Ok(expr)
+    }
+
+    fn sql_in(&mut self) -> Res<SqlExpression> {
+        let mut expr = self.sql_factor()?;
+
+        if self.matches_forward(TokenKind::In)? {
+            let right = self.sql_factor()?;
+            expr = SqlExpression::Binary {
+                left: Box::new(expr),
+                operator: SqlOperator::In,
                 right: Box::new(right),
             };
         }
@@ -630,12 +654,37 @@ impl Parser {
             Ok(SqlExpression::UpVariable(self.make_variable()?))
         } else if self.matches(TokenKind::Identifier)? {
             Ok(SqlExpression::Var(self.make_variable()?))
+        } else if self.matches(TokenKind::LeftParen)? {
+            self.sql_set()
         } else {
             Err(Unexpected(format!(
                 "Expected sql expression, got a {:?}",
                 self.current.kind
             )))
         }
+    }
+
+    fn sql_set(&mut self) -> Res<SqlExpression> {
+        self.skip_newlines()?;
+        let mut members = vec![];
+        if !self.check(TokenKind::RightParen) {
+            loop {
+                let member = self.sql_assignment()?;
+                members.push(member);
+
+                if !self.matches(TokenKind::Comma)? {
+                    break;
+                }
+                self.skip_newlines()?;
+            }
+            self.skip_newlines()?;
+        }
+        self.consume(
+            TokenKind::RightParen,
+            "Expected ) to close a sql set",
+        )?;
+
+        Ok(SqlExpression::Set(members))
     }
 
     fn included(&mut self) -> Res<Expression> {
@@ -1037,13 +1086,7 @@ impl std::fmt::Display for SqlExpression {
             } => {
                 f.write_fmt(format_args!("insert {} (", relation.name))?;
 
-                let mut iter = columns.iter().peekable();
-                while let Some(col) = iter.next() {
-                    std::fmt::Display::fmt(&col.name, f)?;
-                    if iter.peek().is_some() {
-                        f.write_str(", ")?;
-                    }
-                }
+                intersperse(f, columns, ",")?;
 
                 f.write_str(") values ")?;
 
@@ -1062,6 +1105,7 @@ impl std::fmt::Display for SqlExpression {
                     SqlOperator::Rem => "%",
                     SqlOperator::Equal => "=",
                     SqlOperator::And => "and",
+                    SqlOperator::In => "in",
                 };
                 f.write_fmt(format_args!("{left} {op} {right}"))
             }
@@ -1079,6 +1123,13 @@ impl std::fmt::Display for SqlExpression {
             SqlExpression::Var(v) => std::fmt::Display::fmt(&v.name, f),
             SqlExpression::UpVariable(v) => f.write_fmt(format_args!("${}", v.name)),
             SqlExpression::Value(_) => panic!("no value formatting"),
+            SqlExpression::Set(members) => {
+                f.write_str("(")?;
+
+                intersperse(f, members, ",")?;
+
+                f.write_str(")")
+            }
         }
     }
 }
