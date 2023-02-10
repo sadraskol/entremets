@@ -1,9 +1,8 @@
-use crate::engine::{
-    ProcessState, PropertyCheck, RcState, State, Transaction, TransactionState, Value,
-};
+use crate::engine::{PropertyCheck, Transaction, TransactionState, Value};
 use crate::interpreter::InterpreterError::{TypeError, Unexpected};
 use crate::parser::{Expression, Operator, SqlExpression, Statement};
 use crate::sql_interpreter::{SqlEngineError, TransactionId};
+use crate::state::{ProcessState, RcState, State};
 
 #[derive(Debug)]
 pub enum InterpreterError {
@@ -121,13 +120,13 @@ impl Interpreter {
             Statement::Expression(expr) => match self.interpret(expr) {
                 Ok(_) => {}
                 Err(InterpreterError::SqlEngineError(SqlEngineError::RowLockedError(row_id))) => {
-                    self.next_state.state[self.idx] = ProcessState::Locked(row_id);
+                    self.next_state.processes[self.idx] = ProcessState::Locked(row_id);
                     return Ok(0);
                 }
                 Err(err) => return Err(err),
             },
             Statement::Latch => {
-                self.next_state.state[self.idx] = ProcessState::Latching;
+                self.next_state.processes[self.idx] = ProcessState::Latching;
             }
             _ => panic!("Unexpected statement in process: {statement:?}"),
         };

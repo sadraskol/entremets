@@ -1,14 +1,34 @@
-use crate::engine::Report;
+use crate::engine::{Report, Violation};
 use crate::parser::Mets;
 use crate::sql_interpreter::SqlDatabase;
 
 pub fn summary(mets: &Mets, report: &Report) -> String {
     let mut base = if let Some(violation) = &report.violation {
-        let mut x = format!("Following property was violated: {}\n", violation.property);
-        x.push_str("The following counter example was found:\n");
+        let mut x = String::new();
+        let state = match violation {
+            Violation::PropertyViolation { property, state } => {
+                x.push_str(&format!("Following property was violated: {property}\n"));
+                x.push_str("The following counter example was found:\n");
+                state.clone()
+            }
+            Violation::Deadlock { cycle, state } => {
+                x.push_str("System ran into a deadlock:\n");
+                for p in cycle {
+                    let borrowed_state = state.borrow();
+                    let tid = &borrowed_state.txs[*p].id;
+                    let context = borrowed_state.sql.transactions.get(tid).unwrap();
+
+                    x.push_str(&format!(
+                        "Process {p} holds lock on {:?} and waits for {:?}\n",
+                        context.locks, borrowed_state.processes[*p]
+                    ));
+                }
+                state.clone()
+            }
+        };
 
         let mut traces = vec![];
-        let mut current = violation.state.clone();
+        let mut current = state;
         loop {
             traces.push(current.clone());
             let x = if let Some(x) = current.borrow().ancestors.get(0) {

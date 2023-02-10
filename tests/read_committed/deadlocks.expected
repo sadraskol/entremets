@@ -1,1 +1,1 @@
-Following property was violated: eventually<select balance from accounts in {{50, 50}, {100, 100}}>
+System ran into a deadlock:

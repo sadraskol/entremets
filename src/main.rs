@@ -1,5 +1,3 @@
-extern crate core;
-
 use crate::engine::model_checker;
 use crate::parser::{Parser, ParserErrorKind};
 use crate::reporter::summary;
@@ -13,6 +11,7 @@ mod parser;
 mod reporter;
 mod scanner;
 mod sql_interpreter;
+mod state;
 
 fn main() {
     let args: Vec<String> = env::args().collect();

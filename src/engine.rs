@@ -1,11 +1,11 @@
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::fmt::Formatter;
+
 use crate::format::intersperse;
 use crate::interpreter::{Interpreter, InterpreterError};
 use crate::parser::{Mets, Statement};
-use crate::sql_interpreter::{HashableRow, RowId, SqlDatabase, TransactionId};
-use std::cell::{Ref, RefCell, RefMut};
-use std::collections::{HashMap, VecDeque};
-use std::fmt::Formatter;
-use std::rc::Rc;
+use crate::sql_interpreter::{SqlDatabase, TransactionId};
+use crate::state::{HashableState, ProcessState, RcState, State, TransactionInfo};
 
 #[derive(Hash, Eq, PartialEq, Debug, Clone)]
 pub enum TransactionState {
@@ -60,85 +60,16 @@ impl std::fmt::Display for Value {
     }
 }
 
-#[derive(Hash, Eq, PartialEq, Debug, Clone)]
-struct HashableState {
-    pc: Vec<usize>,
-    state: Vec<ProcessState>,
-    global: Vec<(String, Vec<HashableRow>)>,
-    locals: Vec<(String, Value)>,
-    eventually: Vec<(usize, bool)>,
-}
-
 #[derive(PartialEq, Debug, Clone)]
-pub struct Trace {
-    pub pc: Vec<usize>,
-    pub sql: SqlDatabase,
-    pub locals: HashMap<String, Value>,
-}
-
-#[derive(PartialEq, Debug, Clone, Hash, Eq)]
-pub enum ProcessState {
-    Running,
-    Latching,
-    Locked(RowId),
-    Finished,
-}
-
-#[derive(PartialEq, Debug, Clone)]
-pub struct TransactionInfo {
-    pub id: TransactionId,
-    pub name: Option<String>,
-    pub state: TransactionState,
-}
-
-#[derive(PartialEq, Debug, Clone)]
-pub struct State {
-    pub pc: Vec<usize>,
-    pub state: Vec<ProcessState>,
-    pub txs: Vec<TransactionInfo>,
-    pub sql: SqlDatabase,
-    pub locals: HashMap<String, Value>,
-    pub ancestors: Vec<RcState>,
-    eventually: HashMap<usize, bool>,
-}
-
-impl State {
-    fn hash(&self) -> HashableState {
-        HashableState {
-            pc: self.pc.clone(),
-            global: self.sql.hash(),
-            state: self.state.clone(),
-            locals: self
-                .locals
-                .iter()
-                .map(|(l, r)| (l.clone(), r.clone()))
-                .collect(),
-            eventually: self.eventually.iter().map(|(l, r)| (*l, *r)).collect(),
-        }
-    }
-}
-
-#[derive(PartialEq, Debug, Clone)]
-pub struct RcState(Rc<RefCell<State>>);
-
-impl RcState {
-    fn new(state: State) -> RcState {
-        RcState(Rc::new(RefCell::new(state)))
-    }
-
-    pub fn borrow(&self) -> Ref<'_, State> {
-        RefCell::borrow(&self.0)
-    }
-
-    pub fn borrow_mut(&self) -> RefMut<'_, State> {
-        RefCell::borrow_mut(&self.0)
-    }
-}
-
-#[derive(PartialEq, Debug, Clone)]
-pub struct Violation {
-    pub property: Statement,
-    pub state: RcState,
+pub enum Violation {
+    PropertyViolation {
+        property: Statement,
+        state: RcState,
+    },
+    Deadlock {
+        cycle: HashSet<usize>,
+        state: RcState,
+    },
 }
 
 pub struct Report {
@@ -196,7 +127,7 @@ fn private_model_checker(mets: &Mets) -> Res<Report> {
                 PropertyCheck::Always(false) => {
                     return Ok(Report {
                         states_explored,
-                        violation: Some(Violation {
+                        violation: Some(Violation::PropertyViolation {
                             property: property.clone(),
                             state,
                         }),
@@ -217,21 +148,30 @@ fn private_model_checker(mets: &Mets) -> Res<Report> {
 
         let mut is_final = true;
         for (idx, code) in mets.processes.iter().enumerate() {
-            if state.borrow().state[idx] == ProcessState::Running {
+            if state.borrow().processes[idx] == ProcessState::Running {
                 interpreter.idx = idx;
                 let offset = interpreter.statement(&code[state.borrow().pc[idx]])?;
                 let mut new_state = interpreter.next_state();
+
                 new_state.pc[idx] += offset;
-
-                // TODO check for deadlocks
-
-                if new_state.pc[idx] == code.len() {
-                    new_state.state[idx] = ProcessState::Finished
-                }
-                unlock_locks(&mut new_state);
-                unlock_latches(&mut new_state);
-
                 new_state.ancestors = vec![state.clone()];
+                if new_state.pc[idx] == code.len() {
+                    new_state.processes[idx] = ProcessState::Finished
+                }
+
+                if let Some(deadlock_cycle) = new_state.find_deadlocks() {
+                    return Ok(Report {
+                        states_explored,
+                        violation: Some(Violation::Deadlock {
+                            cycle: deadlock_cycle,
+                            state: RcState::new(new_state),
+                        }),
+                    });
+                }
+
+                new_state.unlock_locks();
+                new_state.unlock_latches();
+
                 deq.push_back(RcState::new(new_state));
                 is_final = false;
             }
@@ -241,7 +181,7 @@ fn private_model_checker(mets: &Mets) -> Res<Report> {
             if let Some((id, _)) = state.borrow().eventually.iter().find(|(_, b)| !**b) {
                 return Ok(Report {
                     states_explored,
-                    violation: Some(Violation {
+                    violation: Some(Violation::PropertyViolation {
                         property: mets.properties[*id].clone(),
                         state: state.clone(),
                     }),
@@ -256,43 +196,10 @@ fn private_model_checker(mets: &Mets) -> Res<Report> {
     })
 }
 
-fn unlock_locks(new_state: &mut State) {
-    let mut unlocks = vec![];
-    'outer: for (i, s) in new_state.state.iter().enumerate() {
-        if let ProcessState::Locked(rid) = &s {
-            for context in new_state.sql.transactions.values() {
-                if context.locks.contains(rid) {
-                    continue 'outer;
-                }
-            }
-
-            unlocks.push(i);
-        }
-    }
-
-    for unlock in unlocks {
-        new_state.state[unlock] = ProcessState::Running;
-    }
-}
-
-fn unlock_latches(new_state: &mut State) {
-    if new_state
-        .state
-        .iter()
-        .all(|w| w == &ProcessState::Latching || w == &ProcessState::Finished)
-    {
-        for w in new_state.state.iter_mut() {
-            if w == &ProcessState::Latching {
-                *w = ProcessState::Running;
-            }
-        }
-    }
-}
-
 fn init_state(mets: &Mets) -> Res<State> {
     let init_state = State {
         pc: mets.processes.iter().map(|_| 0).collect(),
-        state: mets
+        processes: mets
             .processes
             .iter()
             .map(|_| ProcessState::Running)
