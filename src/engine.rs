@@ -4,12 +4,13 @@ use std::fmt::Formatter;
 use crate::format::intersperse;
 use crate::interpreter::{Interpreter, InterpreterError};
 use crate::parser::{Mets, Statement};
-use crate::sql_interpreter::{SqlDatabase, TransactionId};
+use crate::sql_interpreter::SqlDatabase;
 use crate::state::{HashableState, ProcessState, RcState, State, TransactionInfo};
 
 #[derive(Hash, Eq, PartialEq, Debug, Clone)]
 pub enum TransactionState {
     NotExisting,
+
     Running,
     Aborted,
     Committed,
@@ -50,7 +51,7 @@ impl std::fmt::Display for Value {
                 intersperse(f, tuple, ",")?;
                 f.write_str(")")
             }
-            Value::Tx(tx) => match tx.0 {
+            Value::Tx(tx) => match &tx.0 {
                 TransactionState::NotExisting => f.write_str("non started transaction"),
                 TransactionState::Running => f.write_str("running transaction"),
                 TransactionState::Aborted => f.write_str("aborted transaction"),
@@ -208,7 +209,7 @@ fn init_state(mets: &Mets) -> Res<State> {
             .processes
             .iter()
             .map(|_| TransactionInfo {
-                id: TransactionId(usize::MAX),
+                id: None,
                 name: None,
                 state: TransactionState::NotExisting,
             })

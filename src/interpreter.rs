@@ -21,6 +21,7 @@ type Res<T> = Result<T, InterpreterError>;
 
 pub struct Interpreter {
     pub idx: usize,
+    checking: bool,
     state: RcState,
     next_state: State,
 }
@@ -29,6 +30,7 @@ impl Interpreter {
     pub fn new(state: RcState) -> Self {
         Interpreter {
             idx: 0,
+            checking: false,
             state: state.clone(),
             next_state: state.borrow().clone(),
         }
@@ -41,7 +43,8 @@ impl Interpreter {
     }
 
     pub fn check_property(&mut self, property: &Statement) -> Res<PropertyCheck> {
-        match property {
+        self.checking = true;
+        let res = match property {
             Statement::Always(always) => {
                 let value = self.interpret(always)?;
                 Ok(PropertyCheck::Always(value == Value::Bool(true)))
@@ -55,14 +58,17 @@ impl Interpreter {
                 Ok(PropertyCheck::Always(value == Value::Bool(false)))
             }
             _ => Err(Unexpected(format!("unsupported property: {property:?}"))),
-        }
+        };
+
+        self.checking = false;
+        res
     }
 
     pub fn statement(&mut self, statement: &Statement) -> Res<usize> {
         match self.priv_statement(statement) {
             Err(InterpreterError::SqlEngineError(SqlEngineError::TransactionAborted)) => {
                 let info = &self.next_state.txs[self.idx];
-                self.next_state.sql.abort(&info.id);
+                self.next_state.sql.abort(&info.id.unwrap());
 
                 if let Some(tx) = &info.name {
                     self.next_state.locals.insert(
@@ -82,7 +88,7 @@ impl Interpreter {
             Statement::Begin(isolation, tx_name) => {
                 self.next_state.txs[self.idx].name = tx_name.as_ref().map(|v| v.name.clone());
                 let id = self.next_state.sql.open_transaction(*isolation);
-                self.next_state.txs[self.idx].id = id;
+                self.next_state.txs[self.idx].id = Some(id);
                 self.next_state.txs[self.idx].state = TransactionState::Running;
 
                 if let Some(tx) = tx_name {
@@ -93,10 +99,13 @@ impl Interpreter {
                 }
             }
             Statement::Commit => {
-                let info = &self.next_state.txs[self.idx];
-                if info.state == TransactionState::Running {
-                    self.next_state.sql.commit(&info.id);
-                    if let Some(tx) = &info.name {
+                if self.next_state.txs[self.idx].state == TransactionState::Running {
+                    self.next_state
+                        .sql
+                        .commit(&self.next_state.txs[self.idx].id.unwrap());
+                    self.next_state.txs.get_mut(self.idx).unwrap().id = None;
+
+                    if let Some(tx) = &self.next_state.txs[self.idx].name {
                         self.next_state.locals.insert(
                             tx.clone(),
                             Value::Tx(Transaction(TransactionState::Committed)),
@@ -106,10 +115,12 @@ impl Interpreter {
                 }
             }
             Statement::Abort => {
-                let info = &self.next_state.txs[self.idx];
-                self.next_state.sql.abort(&info.id);
+                self.next_state
+                    .sql
+                    .abort(&self.next_state.txs[self.idx].id.unwrap());
+                self.next_state.txs[self.idx].id = None;
 
-                if let Some(tx) = &info.name {
+                if let Some(tx) = &&self.next_state.txs[self.idx].name {
                     self.next_state.locals.insert(
                         tx.clone(),
                         Value::Tx(Transaction(TransactionState::Aborted)),
@@ -136,9 +147,8 @@ impl Interpreter {
     fn interpret(&mut self, expression: &Expression) -> Res<Value> {
         match expression {
             Expression::Sql(sql_expr) => {
-                self.next_state.sql.cur_tx = self.running_tx();
                 let reified = self.reify_up_variable(sql_expr)?;
-                Ok(self.next_state.sql.interpret(&reified)?)
+                Ok(self.next_state.sql.execute(&reified, self.running_tx())?)
             }
             Expression::Assignment(variable, expr) => {
                 let value = self.interpret(expr)?;
@@ -355,9 +365,10 @@ impl Interpreter {
     }
 
     fn running_tx(&self) -> Option<TransactionId> {
-        match &self.state.borrow().txs[self.idx].state {
-            TransactionState::Running => Some(self.state.borrow().txs[self.idx].id),
-            _ => None,
+        if self.checking {
+            None
+        } else {
+            self.state.borrow().txs[self.idx].id
         }
     }
 }

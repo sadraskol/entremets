@@ -23,7 +23,7 @@ pub enum ProcessState {
 
 #[derive(PartialEq, Debug, Clone)]
 pub struct TransactionInfo {
-    pub id: TransactionId,
+    pub id: Option<TransactionId>,
     pub name: Option<String>,
     pub state: TransactionState,
 }
@@ -86,7 +86,7 @@ impl State {
                     for (j, context) in &self.sql.transactions {
                         if context.locks.contains(&rid) {
                             for (pc, k) in self.txs.iter().enumerate() {
-                                if k.id == *j {
+                                if k.id == Some(*j) {
                                     deq.push_back(pc);
                                 }
                             }

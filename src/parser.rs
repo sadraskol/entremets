@@ -679,10 +679,7 @@ impl Parser {
             }
             self.skip_newlines()?;
         }
-        self.consume(
-            TokenKind::RightParen,
-            "Expected ) to close a sql set",
-        )?;
+        self.consume(TokenKind::RightParen, "Expected ) to close a sql set")?;
 
         Ok(SqlExpression::Set(members))
     }

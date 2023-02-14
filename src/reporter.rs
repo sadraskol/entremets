@@ -15,7 +15,7 @@ pub fn summary(mets: &Mets, report: &Report) -> String {
                 x.push_str("System ran into a deadlock:\n");
                 for p in cycle {
                     let borrowed_state = state.borrow();
-                    let tid = &borrowed_state.txs[*p].id;
+                    let tid = &borrowed_state.txs[*p].id.unwrap();
                     let context = borrowed_state.sql.transactions.get(tid).unwrap();
 
                     x.push_str(&format!(

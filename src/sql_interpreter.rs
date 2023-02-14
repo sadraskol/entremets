@@ -68,7 +68,7 @@ enum SqlContext {
         row: Row,
     },
     Update {
-        tx: Option<TransactionId>,
+        tx: TransactionId,
         table: String,
         row: Row,
     },
@@ -76,7 +76,7 @@ enum SqlContext {
 
 #[derive(PartialEq, Debug, Clone)]
 pub struct SqlDatabase {
-    pub cur_tx: Option<TransactionId>,
+    pub cur_tx: TransactionId,
     pub tables: HashMap<String, Vec<Row>>,
     pub transactions: HashMap<TransactionId, TransactionContext>,
     tx: TransactionId,
@@ -131,7 +131,7 @@ type Unit = Res<()>;
 impl SqlDatabase {
     pub fn new() -> SqlDatabase {
         SqlDatabase {
-            cur_tx: None,
+            cur_tx: TransactionId(usize::MAX),
             tables: Default::default(),
             transactions: Default::default(),
             tx: TransactionId(0),
@@ -147,7 +147,23 @@ impl SqlDatabase {
         new_tx
     }
 
-    pub fn interpret(&mut self, expr: &SqlExpression) -> Res<Value> {
+    pub fn execute(&mut self, expr: &SqlExpression, opt_tx: Option<TransactionId>) -> Res<Value> {
+        self.cur_tx = if let Some(tx) = opt_tx {
+            tx
+        } else {
+            self.open_transaction(IsolationLevel::ReadCommitted)
+        };
+
+        let res = self.interpret(expr)?;
+
+        if opt_tx.is_none() {
+            self.commit(&self.cur_tx.clone());
+        }
+
+        Ok(res)
+    }
+
+    fn interpret(&mut self, expr: &SqlExpression) -> Res<Value> {
         match expr {
             SqlExpression::Select {
                 columns,
@@ -263,17 +279,10 @@ impl SqlDatabase {
             rows.push(Row(new_row, self.rid.increment()))
         }
 
-        if let Some(tx) = self.cur_tx {
-            let transaction = self.transactions.get_mut(&tx).unwrap();
-            transaction
-                .changes
-                .push(Changes::Insert(table.to_string(), rows));
-        } else {
-            let table = self.tables.entry(table.to_string()).or_default();
-            for row in rows {
-                table.push(row);
-            }
-        }
+        let transaction = self.transactions.get_mut(&self.cur_tx).unwrap();
+        transaction
+            .changes
+            .push(Changes::Insert(table.to_string(), rows));
 
         Ok(Value::Nil)
     }
@@ -340,11 +349,9 @@ impl SqlDatabase {
                     table: from.name.clone(),
                 });
                 if locking {
-                    self.check_locked_row(&self.cur_tx.unwrap_or(TransactionId(usize::MAX)), row)?;
-                    if let Some(tx) = &self.cur_tx {
-                        let transaction = self.transactions.get_mut(tx).unwrap();
-                        transaction.locks.push(row.1);
-                    }
+                    self.check_locked_row(&self.cur_tx, row)?;
+                    let transaction = self.transactions.get_mut(&self.cur_tx).unwrap();
+                    transaction.locks.push(row.1);
                 }
                 if self.interpret(cond)? == Value::Bool(true) {
                     res.push(row.to_value(&columns))
@@ -394,20 +401,18 @@ impl SqlDatabase {
         }
     }
 
-    fn rows(&self, tx: &Option<TransactionId>, table: &String) -> Vec<Row> {
+    fn rows(&self, tx: &TransactionId, table: &String) -> Vec<Row> {
         let mut rows = self.tables.get(table).cloned().unwrap_or_default();
 
-        if let Some(tx) = tx {
-            let transaction = self.transactions.get(tx).unwrap();
-            for changes in &transaction.changes {
-                match changes {
-                    Changes::Insert(insert_table, insert_rows) => {
-                        if insert_table == table {
-                            rows.extend_from_slice(insert_rows);
-                        }
+        let transaction = self.transactions.get(tx).unwrap();
+        for changes in &transaction.changes {
+            match changes {
+                Changes::Insert(insert_table, insert_rows) => {
+                    if insert_table == table {
+                        rows.extend_from_slice(insert_rows);
                     }
-                    Changes::Update(_, _, _, _) => {}
                 }
+                Changes::Update(_, _, _, _) => {}
             }
         }
         rows
@@ -441,22 +446,13 @@ impl SqlDatabase {
         if let Some(sql_context) = self.sql_context.clone() {
             match sql_context {
                 SqlContext::Update { tx, table, row } => {
-                    if let Some(tx) = tx {
-                        self.check_locked_row(&tx, &row)?;
+                    self.check_locked_row(&tx, &row)?;
 
-                        let transaction = self.transactions.get_mut(&tx).unwrap();
-                        transaction.locks.push(row.1);
-                        transaction
-                            .changes
-                            .push(Changes::Update(table, row, name, value));
-                    } else {
-                        let table = self.tables.entry(table).or_default();
-                        for r in table {
-                            if r.1 == row.1 {
-                                r.0.insert(name.clone(), value.clone());
-                            }
-                        }
-                    }
+                    let transaction = self.transactions.get_mut(&tx).unwrap();
+                    transaction.locks.push(row.1);
+                    transaction
+                        .changes
+                        .push(Changes::Update(table, row, name, value));
                 }
                 _ => panic!(),
             }
