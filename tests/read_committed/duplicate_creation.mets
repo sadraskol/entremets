@@ -1,0 +1,26 @@
+process do
+    transaction tx1 read_committed do
+        let count_1 := `select count(age) from users where id = 1`
+        if count_1 >= 1 do
+            `update users set age := 21 where id = 1`
+        else
+            `insert into users(id, age) values (1, 21)`
+        end
+    end
+end
+
+process do
+    transaction tx2 read_committed do
+        let count_2 := `select count(age) from users where id = 1`
+        if count_2 >= do
+            `update users set age := 22 where id = 1`
+        else
+            `insert into users(id, age) values (1, 22)`
+        end
+    end
+end
+
+property = eventually<`select id, age from users` in {
+    {(1, 21)},
+    {(1, 22)}
+}>

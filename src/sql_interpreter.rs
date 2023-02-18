@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::engine::Value;
-use crate::parser::{IsolationLevel, SqlExpression, SqlOperator, Variable};
+use crate::parser::{IsolationLevel, SelectClause, SqlExpression, SqlOperator, Variable};
 use crate::sql_interpreter::SqlEngineError::{SqlTypeError, UnknownVariable};
 
 #[derive(Hash, Eq, PartialEq, Debug, Clone)]
@@ -14,13 +14,13 @@ pub struct HashableRow {
 pub struct Row(pub HashMap<String, Value>, RowId);
 
 impl Row {
-    pub fn to_value(&self, columns: &[String]) -> Value {
+    pub fn to_value(&self, columns: &[SelectClause]) -> Value {
         if columns.len() == 1 {
-            return self.0.get(&columns[0]).unwrap().clone();
+            columns[0].extract(&self.0)
         } else {
             let mut res = vec![];
             for col in columns {
-                res.push(self.0.get(col).unwrap().clone())
+                res.push(col.extract(&self.0))
             }
             Value::Tuple(res)
         }
@@ -333,12 +333,11 @@ impl SqlDatabase {
 
     fn interpret_select(
         &mut self,
-        columns: &[Variable],
+        columns: &[SelectClause],
         from: &Variable,
         condition: &Option<Box<SqlExpression>>,
         locking: bool,
     ) -> Res<Value> {
-        let columns: Vec<_> = columns.iter().map(|v| v.name.clone()).collect();
         let rows = self.rows(&self.cur_tx, &from.name);
 
         let mut res = vec![];
@@ -354,11 +353,11 @@ impl SqlDatabase {
                     transaction.locks.push(row.1);
                 }
                 if self.interpret(cond)? == Value::Bool(true) {
-                    res.push(row.to_value(&columns))
+                    res.push(row.to_value(columns))
                 }
                 self.sql_context = None;
             } else {
-                res.push(row.to_value(&columns))
+                res.push(row.to_value(columns))
             }
         }
 

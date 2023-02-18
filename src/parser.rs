@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fmt::Debug;
 use std::fmt::Formatter;
 use std::mem;
@@ -6,7 +7,6 @@ use std::str::FromStr;
 
 use crate::engine::Value;
 use crate::format::intersperse;
-use crate::parser::ParserErrorKind::Unexpected;
 use crate::scanner::{Scanner, ScannerError, Token, TokenKind};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -47,9 +47,33 @@ impl std::fmt::Display for Variable {
 }
 
 #[derive(PartialEq, Debug, Clone)]
+pub enum SelectClause {
+    V(Variable),
+    Count,
+}
+
+impl SelectClause {
+    pub fn extract(&self, row: &HashMap<String, Value>) -> Value {
+        match self {
+            SelectClause::V(variable) => row.get(&variable.name).unwrap().clone(),
+            SelectClause::Count => panic!(),
+        }
+    }
+}
+
+impl std::fmt::Display for SelectClause {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SelectClause::V(var) => f.write_str(&var.name),
+            SelectClause::Count => f.write_str("count(*)"),
+        }
+    }
+}
+
+#[derive(PartialEq, Debug, Clone)]
 pub enum SqlExpression {
     Select {
-        columns: Vec<Variable>,
+        columns: Vec<SelectClause>,
         from: Variable,
         condition: Option<Box<SqlExpression>>,
         locking: bool,
@@ -244,7 +268,7 @@ impl Parser {
         if self.current.kind == kind {
             self.advance()
         } else {
-            Err(Unexpected(expected.to_string()))
+            Err(ParserErrorKind::Unexpected(expected.to_string()))
         }
     }
 
@@ -256,7 +280,7 @@ impl Parser {
         } else if self.matches(TokenKind::Property)? {
             self.property_declaration()
         } else {
-            Err(Unexpected(format!(
+            Err(ParserErrorKind::Unexpected(format!(
                 "Expected either process, init or property. Parsed {:?} instead",
                 self.current.kind
             )))
@@ -384,7 +408,7 @@ impl Parser {
                 }
                 Ok(())
             }
-            _ => Err(Unexpected(
+            _ => Err(ParserErrorKind::Unexpected(
                 "Expected following isolation level: read_committed".to_string(),
             )),
         }
@@ -393,7 +417,7 @@ impl Parser {
     fn parse_variable(&mut self, expected: &str) -> Res<Variable> {
         self.consume(TokenKind::Identifier, expected)?;
 
-        self.make_variable()
+        Ok(self.make_variable())
     }
 
     fn begin_statement(&mut self, writer: &mut Vec<Statement>) -> Unit {
@@ -407,7 +431,7 @@ impl Parser {
                 writer.push(Statement::Begin(IsolationLevel::ReadCommitted, None));
                 Ok(())
             }
-            _ => Err(Unexpected(
+            _ => Err(ParserErrorKind::Unexpected(
                 "Expected following isolation level: read_committed".to_string(),
             )),
         }
@@ -494,7 +518,7 @@ impl Parser {
             let name = if let Expression::Var(name) = expr {
                 name
             } else {
-                return Err(Unexpected(format!(
+                return Err(ParserErrorKind::Unexpected(format!(
                     "Expected variable before := assignment at {:?}",
                     self.previous
                 )));
@@ -543,7 +567,7 @@ impl Parser {
             let name = if let SqlExpression::Var(name) = expr {
                 name
             } else {
-                return Err(Unexpected(format!(
+                return Err(ParserErrorKind::Unexpected(format!(
                     "Expected variable before := assignment at {:?}",
                     self.previous
                 )));
@@ -651,13 +675,13 @@ impl Parser {
             Ok(SqlExpression::Integer(i))
         } else if self.matches(TokenKind::Dollar)? {
             self.consume(TokenKind::Identifier, "Expect identifier after $")?;
-            Ok(SqlExpression::UpVariable(self.make_variable()?))
+            Ok(SqlExpression::UpVariable(self.make_variable()))
         } else if self.matches(TokenKind::Identifier)? {
-            Ok(SqlExpression::Var(self.make_variable()?))
+            Ok(SqlExpression::Var(self.make_variable()))
         } else if self.matches(TokenKind::LeftParen)? {
             self.sql_set()
         } else {
-            Err(Unexpected(format!(
+            Err(ParserErrorKind::Unexpected(format!(
                 "Expected sql expression, got a {:?}",
                 self.current.kind
             )))
@@ -721,7 +745,7 @@ impl Parser {
             let operator = match self.previous.lexeme.as_str() {
                 "<" => Ok(Operator::Less),
                 "<=" => Ok(Operator::LessEqual),
-                _ => Err(Unexpected(format!(
+                _ => Err(ParserErrorKind::Unexpected(format!(
                     "unknown comparison operator: {}",
                     self.previous.lexeme
                 ))),
@@ -800,7 +824,7 @@ impl Parser {
             )?;
             expr = Expression::Member {
                 call_site: Box::new(expr),
-                member: self.make_variable()?,
+                member: self.make_variable(),
             };
         }
 
@@ -821,7 +845,7 @@ impl Parser {
         } else if self.matches(TokenKind::Newline)? {
             self.expression()
         } else {
-            Err(Unexpected(format!(
+            Err(ParserErrorKind::Unexpected(format!(
                 "Expected expression, got a {:?}",
                 self.current.kind
             )))
@@ -829,7 +853,7 @@ impl Parser {
     }
 
     fn variable(&mut self) -> Res<Expression> {
-        Ok(Expression::Var(self.make_variable()?))
+        Ok(Expression::Var(self.make_variable()))
     }
 
     fn number(&mut self) -> Res<Expression> {
@@ -900,7 +924,7 @@ impl Parser {
         } else if self.matches(TokenKind::Update)? {
             self.update()
         } else {
-            Err(Unexpected(format!(
+            Err(ParserErrorKind::Unexpected(format!(
                 "Expected sql expression, got a {:?}",
                 self.current.kind
             )))
@@ -917,8 +941,8 @@ impl Parser {
     fn select(&mut self) -> Res<SqlExpression> {
         let mut locking = false;
         let mut columns = vec![];
-        while self.matches(TokenKind::Identifier)? {
-            columns.push(self.make_variable()?);
+        while self.current.kind != TokenKind::From {
+            columns.push(self.select_clause()?);
 
             if !self.matches(TokenKind::Comma)? {
                 break;
@@ -928,7 +952,7 @@ impl Parser {
         self.consume(TokenKind::From, "Expected from clause")?;
 
         self.consume(TokenKind::Identifier, "Expected relation for select from")?;
-        let from = self.make_variable()?;
+        let from = self.make_variable();
 
         let mut condition = None;
         if self.matches(TokenKind::Where)? {
@@ -952,9 +976,25 @@ impl Parser {
         })
     }
 
+    fn select_clause(&mut self) -> Res<SelectClause> {
+        if self.matches(TokenKind::Count)? {
+            self.consume(TokenKind::LeftParen, "Expected ( after count")?;
+            self.consume(TokenKind::Identifier, "Expected identifier after count(")?;
+            self.consume(TokenKind::RightParen, "Expected ) after count")?;
+            Ok(SelectClause::Count)
+        } else if self.matches(TokenKind::Identifier)? {
+            Ok(SelectClause::V(self.make_variable()))
+        } else {
+            Err(ParserErrorKind::Unexpected(format!(
+                "Expected select clause, got a {:?} instead",
+                self.current.kind
+            )))
+        }
+    }
+
     fn update(&mut self) -> Res<SqlExpression> {
         self.consume(TokenKind::Identifier, "expect relation for update")?;
-        let relation = self.make_variable()?;
+        let relation = self.make_variable();
 
         self.consume(TokenKind::Set, "Expected set for update expression")?;
 
@@ -976,7 +1016,7 @@ impl Parser {
         self.consume(TokenKind::Into, "Expected into after insert")?;
 
         self.consume(TokenKind::Identifier, "Expected relation after insert into")?;
-        let relation = self.make_variable()?;
+        let relation = self.make_variable();
 
         self.consume(
             TokenKind::LeftParen,
@@ -985,7 +1025,7 @@ impl Parser {
 
         let mut columns = vec![];
         while self.matches(TokenKind::Identifier)? {
-            columns.push(self.make_variable()?);
+            columns.push(self.make_variable());
 
             if !self.matches(TokenKind::Comma)? {
                 break;
@@ -1017,10 +1057,10 @@ impl Parser {
         })
     }
 
-    fn make_variable(&mut self) -> Res<Variable> {
-        Ok(Variable {
+    fn make_variable(&mut self) -> Variable {
+        Variable {
             name: self.previous.lexeme.clone(),
-        })
+        }
     }
 
     fn skip_newlines(&mut self) -> Unit {
@@ -1045,7 +1085,7 @@ impl std::fmt::Display for SqlExpression {
 
                 let mut iter = columns.iter().peekable();
                 while let Some(col) = iter.next() {
-                    std::fmt::Display::fmt(&col.name, f)?;
+                    std::fmt::Display::fmt(col, f)?;
                     if iter.peek().is_some() {
                         f.write_str(", ")?;
                     }

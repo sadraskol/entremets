@@ -129,6 +129,8 @@ pub enum TokenKind {
     Init,
     // let
     Let,
+    // count
+    Count,
     // xxxx
     Identifier,
     // 1111else
@@ -271,7 +273,20 @@ impl Scanner {
                 }
             }
             'b' => self.check_keyword(1, "egin", TokenKind::Begin),
-            'c' => self.check_keyword(1, "ommit", TokenKind::Commit),
+            'c' => {
+                if self.current.index - self.start.index > 2 {
+                    match self.source.chars().nth(self.start.index + 1).unwrap() {
+                        'o' => match self.source.chars().nth(self.start.index + 2).unwrap() {
+                            'm' => self.check_keyword(3, "mit", TokenKind::Commit),
+                            'u' => self.check_keyword(3, "nt", TokenKind::Count),
+                            _ => TokenKind::Identifier,
+                        },
+                        _ => TokenKind::Identifier,
+                    }
+                } else {
+                    TokenKind::Identifier
+                }
+            }
             'd' => self.check_keyword(1, "o", TokenKind::Do),
             'e' => {
                 if self.current.index - self.start.index > 2 {
