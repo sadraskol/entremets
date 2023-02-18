@@ -19,5 +19,5 @@ process do
     end
 end
 
-property = never[first_age in {101, 11} and second_age in {101, 11}]
-property = eventually<`select age from users where id = 1` = 11>
+property = never(first_age in {101, 11} and second_age in {101, 11})
+property = eventually(`select age from users where id = 1` = 11)

@@ -59,14 +59,14 @@ You'd expect `select age from users where id = 1` to be either `21` or `22` when
 In entremets, you can test this property by adding this line to the specifications:
 
 ``` mets
-property = eventually<`select age from users where id = 1` in {21, 22}>
+property = eventually(`select age from users where id = 1` in {21, 22})
 ```
 
 Now lets run this mets (mets are the specification, entremets finds the anomalies) under entremets:
 
 ```
 > entremets lost_update.mets
-Following property was violated: eventually<`select age from users where id = 1` in {21, 22}>
+Following property was violated: eventually(`select age from users where id = 1` in {21, 22})
 The following counter example was found:
 ...
 ```

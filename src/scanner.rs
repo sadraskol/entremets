@@ -61,6 +61,8 @@ pub enum TokenKind {
     Dollar,
     // <=
     LessEqual,
+    // >=
+    GreaterEqual,
     // (
     LeftParen,
     // )
@@ -77,6 +79,10 @@ pub enum TokenKind {
     LeftCarret,
     // >
     RightCarret,
+    // if
+    If,
+    // else
+    Else,
     // do
     Do,
     // end
@@ -221,7 +227,6 @@ impl Scanner {
                 ']' => self.make_token(TokenKind::RightBracket),
                 '{' => self.make_token(TokenKind::LeftBrace),
                 '}' => self.make_token(TokenKind::RightBrace),
-                '>' => self.make_token(TokenKind::RightCarret),
                 ',' => self.make_token(TokenKind::Comma),
                 '+' => self.make_token(TokenKind::Plus),
                 '%' => self.make_token(TokenKind::Percent),
@@ -234,6 +239,13 @@ impl Scanner {
                         self.make_error("Expected =")
                     }
                 }
+                '>' => {
+                    if self.matches('=') {
+                        self.make_token(TokenKind::GreaterEqual)
+                    } else {
+                        self.make_token(TokenKind::RightCarret)
+                    }
+                },
                 '<' => {
                     if self.matches('-') {
                         self.make_token(TokenKind::LeftArrow)
@@ -291,6 +303,7 @@ impl Scanner {
             'e' => {
                 if self.current.index - self.start.index > 2 {
                     match self.source.chars().nth(self.start.index + 1).unwrap() {
+                        'l' => self.check_keyword(2, "se", TokenKind::Else),
                         'n' => self.check_keyword(2, "d", TokenKind::End),
                         'v' => self.check_keyword(2, "entually", TokenKind::Eventually),
                         _ => TokenKind::Identifier,
@@ -313,6 +326,7 @@ impl Scanner {
             'i' => match self.current.index - self.start.index {
                 2 => match self.source.chars().nth(self.start.index + 1).unwrap() {
                     'n' => self.check_keyword(2, "", TokenKind::In),
+                    'f' => self.check_keyword(2, "", TokenKind::If),
                     _ => TokenKind::Identifier,
                 },
                 x if x > 2 => match self.source.chars().nth(self.start.index + 1).unwrap() {

@@ -1,8 +1,10 @@
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::fmt::Formatter;
 use std::mem;
 use std::num::ParseIntError;
+use std::rc::Rc;
 use std::str::FromStr;
 
 use crate::engine::Value;
@@ -16,6 +18,9 @@ pub enum Statement {
     Abort,
     Expression(Expression),
     Latch,
+
+    If(Expression, Rc<Cell<usize>>),
+    Else(Rc<Cell<usize>>),
 
     Always(Expression),
     Never(Expression),
@@ -56,7 +61,7 @@ impl SelectClause {
     pub fn extract(&self, row: &HashMap<String, Value>) -> Value {
         match self {
             SelectClause::V(variable) => row.get(&variable.name).unwrap().clone(),
-            SelectClause::Count => panic!(),
+            SelectClause::Count => Value::Integer(1),
         }
     }
 }
@@ -129,6 +134,8 @@ pub enum Operator {
     Rem,
     Equal,
     LessEqual,
+    Greater,
+    GreaterEqual,
     Less,
     Included,
     And,
@@ -242,6 +249,15 @@ impl Parser {
         })
     }
 
+    fn match_within(&mut self, kinds: &[TokenKind]) -> Res<bool> {
+        Ok(if kinds.contains(&self.current.kind) {
+            self.advance()?;
+            true
+        } else {
+            false
+        })
+    }
+
     fn matches_forward(&mut self, kind: TokenKind) -> Res<bool> {
         let mut clone = self.scanner.clone();
         let mut advances = 1;
@@ -348,25 +364,29 @@ impl Parser {
 
     fn statement(&mut self, writer: &mut Vec<Statement>) -> Unit {
         if self.matches(TokenKind::Let)? {
-            self.assignment_statement(writer)?;
+            self.assignment_statement(writer)?
         } else if self.matches(TokenKind::Transaction)? {
-            self.transaction_statement(writer)?;
+            self.transaction_statement(writer)?
         } else if self.matches(TokenKind::Begin)? {
-            self.begin_statement(writer)?;
+            self.begin_statement(writer)?
         } else if self.matches(TokenKind::Commit)? {
-            self.commit_statement(writer)?;
+            self.commit_statement(writer)?
+        } else if self.matches(TokenKind::If)? {
+            self.if_statement(writer)?
+        } else if self.matches(TokenKind::Else)? {
+            self.else_statement(writer)?
         } else if self.matches(TokenKind::Abort)? {
-            self.abort_statement(writer)?;
+            self.abort_statement(writer)?
         } else if self.matches(TokenKind::Latch)? {
-            self.latch_statement(writer)?;
+            self.latch_statement(writer)?
         } else if self.matches(TokenKind::Always)? {
-            self.always_statement(writer)?;
+            self.always_statement(writer)?
         } else if self.matches(TokenKind::Never)? {
-            self.never_statement(writer)?;
+            self.never_statement(writer)?
         } else if self.matches(TokenKind::Eventually)? {
-            self.eventually_statement(writer)?;
+            self.eventually_statement(writer)?
         } else {
-            self.expression_statement(writer)?;
+            self.expression_statement(writer)?
         };
 
         self.end_line()
@@ -443,6 +463,36 @@ impl Parser {
         Ok(())
     }
 
+    fn if_statement(&mut self, writer: &mut Vec<Statement>) -> Unit {
+        let expr = self.expression()?;
+        self.consume(TokenKind::Do, "Expected do token after if condition")?;
+        self.end_line()?;
+
+        let if_offset = Rc::new(Cell::new(0));
+        writer.push(Statement::If(expr, if_offset.clone()));
+
+        while !self.matches_forward(TokenKind::Else)? {
+            self.statement(writer)?;
+            if_offset.set(if_offset.get() + 1);
+        }
+
+        let else_offset = Rc::new(Cell::new(0));
+        writer.push(Statement::Else(else_offset.clone()));
+        if_offset.set(if_offset.get() + 1);
+        self.end_line()?;
+
+        while !self.matches_forward(TokenKind::End)? {
+            self.statement(writer)?;
+            else_offset.set(else_offset.get() + 1);
+        }
+
+        Ok(())
+    }
+
+    fn else_statement(&mut self, _writer: &mut [Statement]) -> Unit {
+        panic!()
+    }
+
     fn abort_statement(&mut self, writer: &mut Vec<Statement>) -> Unit {
         writer.push(Statement::Abort);
         self.manual_commit = true;
@@ -456,15 +506,15 @@ impl Parser {
 
     fn always_statement(&mut self, writer: &mut Vec<Statement>) -> Unit {
         self.consume(
-            TokenKind::LeftBracket,
-            "Expected [ to open always statement",
+            TokenKind::LeftParen,
+            "Expected ( to open always statement",
         )?;
 
         let expr = self.expression()?;
 
         self.consume(
-            TokenKind::RightBracket,
-            "Expected ] to close always statement",
+            TokenKind::RightParen,
+            "Expected ) to close always statement",
         )?;
 
         writer.push(Statement::Always(expr));
@@ -472,13 +522,13 @@ impl Parser {
     }
 
     fn never_statement(&mut self, writer: &mut Vec<Statement>) -> Unit {
-        self.consume(TokenKind::LeftBracket, "Expected [ to open never statement")?;
+        self.consume(TokenKind::LeftParen, "Expected ( to open never statement")?;
 
         let expr = self.expression()?;
 
         self.consume(
-            TokenKind::RightBracket,
-            "Expected ] to close never statement",
+            TokenKind::RightParen,
+            "Expected ) to close never statement",
         )?;
         writer.push(Statement::Never(expr));
         Ok(())
@@ -486,16 +536,16 @@ impl Parser {
 
     fn eventually_statement(&mut self, writer: &mut Vec<Statement>) -> Unit {
         self.consume(
-            TokenKind::LeftCarret,
-            "Expected < to open eventually statement",
+            TokenKind::LeftParen,
+            "Expected ( to open eventually statement",
         )?;
 
         let expr = self.expression()?;
 
         self.skip_newlines()?;
         self.consume(
-            TokenKind::RightCarret,
-            "Expected > to close eventually statement",
+            TokenKind::RightParen,
+            "Expected ) to close eventually statement",
         )?;
         writer.push(Statement::Eventually(expr));
         Ok(())
@@ -741,10 +791,12 @@ impl Parser {
     fn comparison(&mut self) -> Res<Expression> {
         let mut expr = self.term()?;
 
-        if self.matches(TokenKind::LeftCarret)? || self.matches(TokenKind::LessEqual)? {
-            let operator = match self.previous.lexeme.as_str() {
-                "<" => Ok(Operator::Less),
-                "<=" => Ok(Operator::LessEqual),
+        if self.match_within(&[TokenKind::LeftCarret, TokenKind::LessEqual, TokenKind::GreaterEqual, TokenKind::RightCarret])? {
+            let operator = match self.previous.kind {
+                TokenKind::LessEqual => Ok(Operator::LessEqual),
+                TokenKind::GreaterEqual => Ok(Operator::GreaterEqual),
+                TokenKind::LeftCarret => Ok(Operator::Less),
+                TokenKind::RightCarret => Ok(Operator::Greater),
                 _ => Err(ParserErrorKind::Unexpected(format!(
                     "unknown comparison operator: {}",
                     self.previous.lexeme
@@ -1190,6 +1242,8 @@ impl std::fmt::Display for Expression {
                     Operator::Included => "in",
                     Operator::And => "and",
                     Operator::Or => "or",
+                    Operator::Greater => ">",
+                    Operator::GreaterEqual => ">="
                 };
                 f.write_fmt(format_args!("{left} {op} {right}"))
             }
@@ -1226,9 +1280,11 @@ impl std::fmt::Display for Statement {
             Statement::Abort => f.write_str("abort"),
             Statement::Expression(expr) => std::fmt::Display::fmt(&expr, f),
             Statement::Latch => f.write_str("latch"),
-            Statement::Always(expr) => f.write_fmt(format_args!("always[{expr}]")),
-            Statement::Never(expr) => f.write_fmt(format_args!("never[{expr}]")),
-            Statement::Eventually(expr) => f.write_fmt(format_args!("eventually<{expr}>")),
+            Statement::Always(expr) => f.write_fmt(format_args!("always({expr})")),
+            Statement::Never(expr) => f.write_fmt(format_args!("never({expr})")),
+            Statement::Eventually(expr) => f.write_fmt(format_args!("eventually({expr})")),
+            Statement::If(expr, _) => f.write_fmt(format_args!("if {expr} do")),
+            Statement::Else(_) => f.write_str("else"),
         }
     }
 }

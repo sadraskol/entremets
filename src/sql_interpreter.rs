@@ -361,6 +361,10 @@ impl SqlDatabase {
             }
         }
 
+        if columns.iter().any(|col| matches!(col, SelectClause::Count)) {
+            return Ok(Value::Integer(res.len() as i16));
+        }
+
         if res.len() == 1 {
             return Ok(res[0].clone());
         }

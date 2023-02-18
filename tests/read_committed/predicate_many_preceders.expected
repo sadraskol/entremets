@@ -1,1 +1,1 @@
-Following property was violated: eventually<first = {} and second = {}>
+Following property was violated: eventually(first = {} and second = {})

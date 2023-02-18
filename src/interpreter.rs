@@ -7,7 +7,7 @@ use crate::state::{ProcessState, RcState, State};
 #[derive(Debug)]
 pub enum InterpreterError {
     Unexpected(String),
-    TypeError(Expression, String),
+    TypeError(Expression, Value, String),
     SqlEngineError(SqlEngineError),
 }
 
@@ -139,6 +139,15 @@ impl Interpreter {
             Statement::Latch => {
                 self.next_state.processes[self.idx] = ProcessState::Latching;
             }
+            Statement::If(expr, offset) => {
+                let cond = self.assert_bool(expr)?;
+                if !cond {
+                    return Ok(offset.get());
+                }
+            }
+            Statement::Else(offset) => {
+                return Ok(offset.get());
+            }
             _ => panic!("Unexpected statement in process: {statement:?}"),
         };
         Ok(1)
@@ -196,34 +205,38 @@ impl Interpreter {
     }
 
     fn assert_transaction(&mut self, expr: &Expression) -> Res<Transaction> {
-        if let Value::Tx(value) = self.interpret(expr)? {
+        let value = self.interpret(expr)?;
+        if let Value::Tx(value) = value {
             Ok(value)
         } else {
-            Err(TypeError(expr.clone(), "transaction".to_string()))
+            Err(TypeError(expr.clone(), value.clone(), "transaction".to_string()))
         }
     }
 
     fn assert_integer(&mut self, expr: &Expression) -> Res<i16> {
-        if let Value::Integer(value) = self.interpret(expr)? {
+        let value = self.interpret(expr)?;
+        if let Value::Integer(value) = value {
             Ok(value)
         } else {
-            Err(TypeError(expr.clone(), "integer".to_string()))
+            Err(TypeError(expr.clone(), value, "integer".to_string()))
         }
     }
 
     fn assert_set(&mut self, expr: &Expression) -> Res<Vec<Value>> {
-        if let Value::Set(value) = self.interpret(expr)? {
+        let value = self.interpret(expr)?;
+        if let Value::Set(value) = value {
             Ok(value)
         } else {
-            Err(TypeError(expr.clone(), "set".to_string()))
+            Err(TypeError(expr.clone(), value, "set".to_string()))
         }
     }
 
     fn assert_bool(&mut self, expr: &Expression) -> Res<bool> {
-        if let Value::Bool(value) = self.interpret(expr)? {
+        let value = self.interpret(expr)?;
+        if let Value::Bool(value) = value {
             Ok(value)
         } else {
-            Err(TypeError(expr.clone(), "bool".to_string()))
+            Err(TypeError(expr.clone(), value, "bool".to_string()))
         }
     }
 
@@ -278,6 +291,16 @@ impl Interpreter {
                 let left = self.assert_bool(left)?;
                 let right = self.assert_bool(right)?;
                 Ok(Value::Bool(left || right))
+            }
+            Operator::Greater => {
+                let left = self.assert_integer(left)?;
+                let right = self.assert_integer(right)?;
+                Ok(Value::Bool(left > right))
+            }
+            Operator::GreaterEqual => {
+                let left = self.assert_integer(left)?;
+                let right = self.assert_integer(right)?;
+                Ok(Value::Bool(left >= right))
             }
         }
     }

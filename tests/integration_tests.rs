@@ -34,5 +34,6 @@ entremets_test! {
     optimistic_lost_update,
     observed_transaction_vanishes,
     predicate_many_preceders,
-    write_cycles
+    write_cycles,
+    duplicate_creation
 }

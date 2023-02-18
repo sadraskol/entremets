@@ -18,4 +18,4 @@ process do
     end
 end
 
-property = eventually<first = {} and second = {}>
+property = eventually(first = {} and second = {})
