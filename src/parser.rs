@@ -93,6 +93,10 @@ pub enum SqlExpression {
         columns: Vec<Variable>,
         values: Vec<SqlExpression>,
     },
+    Create {
+        relation: Variable,
+        column: Variable,
+    },
     Binary {
         left: Box<SqlExpression>,
         operator: SqlOperator,
@@ -505,10 +509,7 @@ impl Parser {
     }
 
     fn always_statement(&mut self, writer: &mut Vec<Statement>) -> Unit {
-        self.consume(
-            TokenKind::LeftParen,
-            "Expected ( to open always statement",
-        )?;
+        self.consume(TokenKind::LeftParen, "Expected ( to open always statement")?;
 
         let expr = self.expression()?;
 
@@ -526,10 +527,7 @@ impl Parser {
 
         let expr = self.expression()?;
 
-        self.consume(
-            TokenKind::RightParen,
-            "Expected ) to close never statement",
-        )?;
+        self.consume(TokenKind::RightParen, "Expected ) to close never statement")?;
         writer.push(Statement::Never(expr));
         Ok(())
     }
@@ -791,7 +789,12 @@ impl Parser {
     fn comparison(&mut self) -> Res<Expression> {
         let mut expr = self.term()?;
 
-        if self.match_within(&[TokenKind::LeftCarret, TokenKind::LessEqual, TokenKind::GreaterEqual, TokenKind::RightCarret])? {
+        if self.match_within(&[
+            TokenKind::LeftCarret,
+            TokenKind::LessEqual,
+            TokenKind::GreaterEqual,
+            TokenKind::RightCarret,
+        ])? {
             let operator = match self.previous.kind {
                 TokenKind::LessEqual => Ok(Operator::LessEqual),
                 TokenKind::GreaterEqual => Ok(Operator::GreaterEqual),
@@ -975,6 +978,8 @@ impl Parser {
             self.insert()
         } else if self.matches(TokenKind::Update)? {
             self.update()
+        } else if self.matches(TokenKind::Create)? {
+            self.create()
         } else {
             Err(ParserErrorKind::Unexpected(format!(
                 "Expected sql expression, got a {:?}",
@@ -1062,6 +1067,35 @@ impl Parser {
             update,
             condition,
         })
+    }
+
+    fn create(&mut self) -> Res<SqlExpression> {
+        self.consume(TokenKind::Unique, "Expected unique after create")?;
+        self.consume(TokenKind::Index, "Expected index after create unique")?;
+        self.consume(TokenKind::On, "Expected on after create unique index")?;
+
+        self.consume(
+            TokenKind::Identifier,
+            "Expected table object for create unique index",
+        )?;
+        let relation = self.make_variable();
+
+        self.consume(
+            TokenKind::LeftParen,
+            "Expected column declaration after relation in insert into",
+        )?;
+
+        self.consume(
+            TokenKind::Identifier,
+            "Expected single column name after relation",
+        )?;
+        let column = self.make_variable();
+        self.consume(
+            TokenKind::RightParen,
+            "Expected ) closing columns declaration",
+        )?;
+
+        Ok(SqlExpression::Create { relation, column })
     }
 
     fn insert(&mut self) -> Res<SqlExpression> {
@@ -1219,6 +1253,13 @@ impl std::fmt::Display for SqlExpression {
 
                 f.write_str(")")
             }
+            SqlExpression::Create { relation, column } => {
+                f.write_fmt(format_args!("create unique index on {}(", relation.name))?;
+
+                intersperse(f, &[column], ",")?;
+
+                f.write_str(")")
+            }
         }
     }
 }
@@ -1243,7 +1284,7 @@ impl std::fmt::Display for Expression {
                     Operator::And => "and",
                     Operator::Or => "or",
                     Operator::Greater => ">",
-                    Operator::GreaterEqual => ">="
+                    Operator::GreaterEqual => ">=",
                 };
                 f.write_fmt(format_args!("{left} {op} {right}"))
             }

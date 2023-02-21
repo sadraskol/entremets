@@ -75,10 +75,10 @@ pub fn summary(mets: &Mets, report: &Report) -> String {
 
 fn sql_summary(global: &SqlDatabase) -> String {
     let mut x = String::new();
-    for (table, rows) in global.tables.iter() {
-        x.push_str(&format!("{table}: {{"));
+    for (table_name, table) in global.tables.iter() {
+        x.push_str(&format!("{table_name}: {{"));
 
-        let mut x1 = rows.iter().peekable();
+        let mut x1 = table.rows.iter().peekable();
         while let Some(row) = x1.next() {
             x.push('(');
             let values = row.values();

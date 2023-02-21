@@ -171,7 +171,7 @@ fn private_model_checker(mets: &Mets) -> Res<Report> {
                 }
 
                 new_state.unlock_locks();
-                new_state.unlock_latches();
+                new_state.release_latches();
 
                 deq.push_back(RcState::new(new_state));
                 is_final = false;

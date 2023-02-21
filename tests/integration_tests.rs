@@ -28,12 +28,13 @@ entremets_test! {
     aborted_reads,
     circular_information_flow,
     deadlocks,
+    duplicate_creation,
     intermediate_reads,
     lost_update,
     not_lost_update,
-    optimistic_lost_update,
     observed_transaction_vanishes,
+    optimistic_lost_update,
     predicate_many_preceders,
-    write_cycles,
-    duplicate_creation
+    unique_contraint,
+    write_cycles
 }

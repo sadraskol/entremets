@@ -66,6 +66,7 @@ impl Interpreter {
 
     pub fn statement(&mut self, statement: &Statement) -> Res<usize> {
         match self.priv_statement(statement) {
+            Err(InterpreterError::SqlEngineError(SqlEngineError::UnicityViolation)) => Ok(1),
             Err(InterpreterError::SqlEngineError(SqlEngineError::TransactionAborted)) => {
                 let info = &self.next_state.txs[self.idx];
                 self.next_state.sql.abort(&info.id.unwrap());
@@ -130,8 +131,8 @@ impl Interpreter {
             }
             Statement::Expression(expr) => match self.interpret(expr) {
                 Ok(_) => {}
-                Err(InterpreterError::SqlEngineError(SqlEngineError::RowLockedError(row_id))) => {
-                    self.next_state.processes[self.idx] = ProcessState::Locked(row_id);
+                Err(InterpreterError::SqlEngineError(SqlEngineError::Locked(lock))) => {
+                    self.next_state.processes[self.idx] = ProcessState::Locked(lock);
                     return Ok(0);
                 }
                 Err(err) => return Err(err),
@@ -209,7 +210,11 @@ impl Interpreter {
         if let Value::Tx(value) = value {
             Ok(value)
         } else {
-            Err(TypeError(expr.clone(), value.clone(), "transaction".to_string()))
+            Err(TypeError(
+                expr.clone(),
+                value.clone(),
+                "transaction".to_string(),
+            ))
         }
     }
 

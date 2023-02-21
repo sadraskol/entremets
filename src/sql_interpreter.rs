@@ -11,45 +11,54 @@ pub struct HashableRow {
 }
 
 #[derive(PartialEq, Debug, Clone)]
-pub struct Row(pub HashMap<String, Value>, RowId);
+pub struct Row {
+    pub tuples: HashMap<String, Value>,
+    rid: RowId,
+}
 
 impl Row {
     pub fn to_value(&self, columns: &[SelectClause]) -> Value {
         if columns.len() == 1 {
-            columns[0].extract(&self.0)
+            columns[0].extract(&self.tuples)
         } else {
             let mut res = vec![];
             for col in columns {
-                res.push(col.extract(&self.0))
+                res.push(col.extract(&self.tuples))
             }
             Value::Tuple(res)
         }
     }
 
     pub fn keys(&self) -> Vec<String> {
-        self.0.keys().cloned().collect()
+        self.tuples.keys().cloned().collect()
     }
 
     pub fn values(&self) -> Vec<Value> {
-        self.0.values().cloned().collect()
+        self.tuples.values().cloned().collect()
     }
 
     fn hash(self) -> HashableRow {
-        let (keys, values): (Vec<String>, Vec<Value>) = self.0.into_iter().unzip();
+        let (keys, values): (Vec<String>, Vec<Value>) = self.tuples.into_iter().unzip();
         HashableRow { keys, values }
     }
 }
 
 #[derive(PartialEq, Debug, Clone)]
 enum Changes {
-    Insert(String, Vec<Row>),
+    Insert(String, Row),
     Update(String, Row, String, Value),
+}
+
+#[derive(PartialEq, Eq, Debug, Clone, Hash)]
+pub enum Lock {
+    RowUpdate(RowId),
+    Unique(String, String, Value),
 }
 
 #[derive(PartialEq, Debug, Clone)]
 pub struct TransactionContext {
     changes: Vec<Changes>,
-    pub locks: Vec<RowId>,
+    pub locks: Vec<Lock>,
 }
 
 impl TransactionContext {
@@ -74,10 +83,16 @@ enum SqlContext {
     },
 }
 
+#[derive(PartialEq, Default, Debug, Clone)]
+pub struct Table {
+    pub rows: Vec<Row>,
+    pub unique: Vec<String>,
+}
+
 #[derive(PartialEq, Debug, Clone)]
 pub struct SqlDatabase {
     pub cur_tx: TransactionId,
-    pub tables: HashMap<String, Vec<Row>>,
+    pub tables: HashMap<String, Table>,
     pub transactions: HashMap<TransactionId, TransactionContext>,
     tx: TransactionId,
     rid: RowId,
@@ -87,10 +102,10 @@ pub struct SqlDatabase {
 impl SqlDatabase {
     pub fn hash(&self) -> Vec<(String, Vec<HashableRow>)> {
         let mut res = vec![];
-        for (name, rows) in &self.tables {
+        for (name, table) in &self.tables {
             res.push((
                 name.clone(),
-                rows.iter().map(|row| row.clone().hash()).collect(),
+                table.rows.iter().map(|row| row.clone().hash()).collect(),
             ));
         }
         res
@@ -119,9 +134,10 @@ impl RowId {
 
 #[derive(PartialEq, Debug, Clone)]
 pub enum SqlEngineError {
-    RowLockedError(RowId),
+    Locked(Lock),
     SqlTypeError(SqlExpression, String),
     TransactionAborted,
+    UnicityViolation,
     UnknownVariable(String),
 }
 
@@ -201,7 +217,7 @@ impl SqlDatabase {
             }
             SqlExpression::Var(var) => {
                 if let Some(SqlContext::Where { row, .. }) = &self.sql_context {
-                    Ok(row.0.get(&var.name).unwrap().clone())
+                    Ok(row.tuples.get(&var.name).unwrap().clone())
                 } else {
                     Err(UnknownVariable(var.name.clone()))
                 }
@@ -214,6 +230,11 @@ impl SqlDatabase {
                     res.push(self.interpret(member)?);
                 }
                 Ok(Value::Set(res))
+            }
+            SqlExpression::Create { relation, column } => {
+                let table = self.tables.entry(relation.name.clone()).or_default();
+                table.unique.push(column.name.clone());
+                Ok(Value::Nil)
             }
         }
     }
@@ -270,20 +291,32 @@ impl SqlDatabase {
         }
 
         let table = &relation.name;
-        let mut rows = vec![];
         for tuple in values {
             let mut new_row = HashMap::new();
             for (i, col) in columns.iter().enumerate() {
+                self.check_unique_values(&self.cur_tx, table, &col.name, &tuple[i])?;
                 new_row.insert(col.name.clone(), tuple[i].clone());
             }
-            rows.push(Row(new_row, self.rid.increment()))
+
+            let transaction = self.transactions.get_mut(&self.cur_tx).unwrap();
+
+            if let Some(t) = self.tables.get(table) {
+                for unique in &t.unique {
+                    transaction.locks.push(Lock::Unique(
+                        table.clone(),
+                        unique.clone(),
+                        new_row.get(unique).unwrap().clone(),
+                    ));
+                }
+            }
+            transaction.changes.push(Changes::Insert(
+                table.to_string(),
+                Row {
+                    tuples: new_row,
+                    rid: self.rid.increment(),
+                },
+            ));
         }
-
-        let transaction = self.transactions.get_mut(&self.cur_tx).unwrap();
-        transaction
-            .changes
-            .push(Changes::Insert(table.to_string(), rows));
-
         Ok(Value::Nil)
     }
 
@@ -336,7 +369,7 @@ impl SqlDatabase {
         columns: &[SelectClause],
         from: &Variable,
         condition: &Option<Box<SqlExpression>>,
-        locking: bool,
+        for_update: bool,
     ) -> Res<Value> {
         let rows = self.rows(&self.cur_tx, &from.name);
 
@@ -347,10 +380,10 @@ impl SqlDatabase {
                     row: row.clone(),
                     table: from.name.clone(),
                 });
-                if locking {
+                if for_update {
                     self.check_locked_row(&self.cur_tx, row)?;
                     let transaction = self.transactions.get_mut(&self.cur_tx).unwrap();
-                    transaction.locks.push(row.1);
+                    transaction.locks.push(Lock::RowUpdate(row.rid));
                 }
                 if self.interpret(cond)? == Value::Bool(true) {
                     res.push(row.to_value(columns))
@@ -404,36 +437,36 @@ impl SqlDatabase {
         }
     }
 
-    fn rows(&self, tx: &TransactionId, table: &String) -> Vec<Row> {
-        let mut rows = self.tables.get(table).cloned().unwrap_or_default();
+    fn rows(&self, tx: &TransactionId, table_name: &String) -> Vec<Row> {
+        let mut table = self.tables.get(table_name).cloned().unwrap_or_default();
 
         let transaction = self.transactions.get(tx).unwrap();
         for changes in &transaction.changes {
             match changes {
-                Changes::Insert(insert_table, insert_rows) => {
-                    if insert_table == table {
-                        rows.extend_from_slice(insert_rows);
+                Changes::Insert(insert_table, insert_row) => {
+                    if insert_table == table_name {
+                        table.rows.push(insert_row.clone());
                     }
                 }
                 Changes::Update(_, _, _, _) => {}
             }
         }
-        rows
+        table.rows
     }
 
     pub fn commit(&mut self, tx: &TransactionId) {
         let tx = self.transactions.remove(tx).unwrap();
         for change in tx.changes {
             match change {
-                Changes::Insert(table, rows) => {
+                Changes::Insert(table, row) => {
                     let table = self.tables.entry(table.clone()).or_default();
-                    table.extend_from_slice(&rows);
+                    table.rows.push(row);
                 }
                 Changes::Update(table, row, col, value) => {
                     let table = self.tables.entry(table.clone()).or_default();
-                    for r in table {
-                        if r.1 == row.1 {
-                            r.0.insert(col.clone(), value.clone());
+                    for r in &mut table.rows {
+                        if r.rid == row.rid {
+                            r.tuples.insert(col.clone(), value.clone());
                         }
                     }
                 }
@@ -450,9 +483,19 @@ impl SqlDatabase {
             match sql_context {
                 SqlContext::Update { tx, table, row } => {
                     self.check_locked_row(&tx, &row)?;
+                    self.check_unique_values(&tx, &table, &name, &value)?;
 
                     let transaction = self.transactions.get_mut(&tx).unwrap();
-                    transaction.locks.push(row.1);
+
+                    let t = self.tables.get(&table).unwrap();
+                    if t.unique.contains(&name) {
+                        transaction.locks.push(Lock::Unique(
+                            table.clone(),
+                            name.clone(),
+                            value.clone(),
+                        ));
+                    }
+                    transaction.locks.push(Lock::RowUpdate(row.rid));
                     transaction
                         .changes
                         .push(Changes::Update(table, row, name, value));
@@ -466,8 +509,33 @@ impl SqlDatabase {
 
     fn check_locked_row(&self, tx: &TransactionId, row: &Row) -> Unit {
         for (id, t) in &self.transactions {
-            if id != tx && t.locks.contains(&row.1) {
-                return Err(SqlEngineError::RowLockedError(row.1));
+            let lock = Lock::RowUpdate(row.rid);
+            if id != tx && t.locks.contains(&lock) {
+                return Err(SqlEngineError::Locked(lock));
+            }
+        }
+        Ok(())
+    }
+
+    fn check_unique_values(
+        &self,
+        tx: &TransactionId,
+        table: &str,
+        name: &str,
+        value: &Value,
+    ) -> Unit {
+        for (id, t) in &self.transactions {
+            let lock = Lock::Unique(table.to_string(), name.to_string(), value.clone());
+            if id != tx && t.locks.contains(&lock) {
+                return Err(SqlEngineError::Locked(lock));
+            }
+        }
+
+        if let Some(t) = self.tables.get(table) {
+            for existing in &t.rows {
+                if existing.tuples.get(name) == Some(value) {
+                    return Err(SqlEngineError::UnicityViolation);
+                }
             }
         }
         Ok(())

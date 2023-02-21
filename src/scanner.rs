@@ -137,6 +137,14 @@ pub enum TokenKind {
     Let,
     // count
     Count,
+    // create
+    Create,
+    // unique
+    Unique,
+    // index
+    Index,
+    // on
+    On,
     // xxxx
     Identifier,
     // 1111else
@@ -245,7 +253,7 @@ impl Scanner {
                     } else {
                         self.make_token(TokenKind::RightCarret)
                     }
-                },
+                }
                 '<' => {
                     if self.matches('-') {
                         self.make_token(TokenKind::LeftArrow)
@@ -293,6 +301,7 @@ impl Scanner {
                             'u' => self.check_keyword(3, "nt", TokenKind::Count),
                             _ => TokenKind::Identifier,
                         },
+                        'r' => self.check_keyword(2, "eate", TokenKind::Create),
                         _ => TokenKind::Identifier,
                     }
                 } else {
@@ -331,6 +340,7 @@ impl Scanner {
                 },
                 x if x > 2 => match self.source.chars().nth(self.start.index + 1).unwrap() {
                     'n' => match self.source.chars().nth(self.start.index + 2).unwrap() {
+                        'd' => self.check_keyword(3, "ex", TokenKind::Index),
                         'i' => self.check_keyword(3, "t", TokenKind::Init),
                         's' => self.check_keyword(3, "ert", TokenKind::Insert),
                         't' => self.check_keyword(3, "o", TokenKind::Into),
@@ -352,7 +362,17 @@ impl Scanner {
                     TokenKind::Identifier
                 }
             }
-            'o' => self.check_keyword(1, "r", TokenKind::Or),
+            'o' => {
+                if self.current.index - self.start.index == 2 {
+                    match self.source.chars().nth(self.start.index + 1).unwrap() {
+                        'r' => TokenKind::Or,
+                        'n' => TokenKind::On,
+                        _ => TokenKind::Identifier,
+                    }
+                } else {
+                    TokenKind::Identifier
+                }
+            }
             'p' => {
                 if self.current.index - self.start.index > 6 {
                     if self
@@ -394,7 +414,17 @@ impl Scanner {
                 }
             }
             't' => self.check_keyword(1, "ransaction", TokenKind::Transaction),
-            'u' => self.check_keyword(1, "pdate", TokenKind::Update),
+            'u' => {
+                if self.current.index - self.start.index > 5 {
+                    match self.source.chars().nth(self.start.index + 1).unwrap() {
+                        'p' => self.check_keyword(2, "date", TokenKind::Update),
+                        'n' => self.check_keyword(2, "ique", TokenKind::Unique),
+                        _ => TokenKind::Identifier,
+                    }
+                } else {
+                    TokenKind::Identifier
+                }
+            }
             'v' => self.check_keyword(1, "alues", TokenKind::Values),
             'w' => self.check_keyword(1, "here", TokenKind::Where),
             _ => TokenKind::Identifier,

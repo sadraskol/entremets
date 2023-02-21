@@ -1,5 +1,5 @@
 use crate::engine::{TransactionState, Value};
-use crate::sql_interpreter::{HashableRow, RowId, SqlDatabase, TransactionId};
+use crate::sql_interpreter::{HashableRow, Lock, SqlDatabase, TransactionId};
 use std::cell::{Ref, RefCell, RefMut};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::rc::Rc;
@@ -17,7 +17,7 @@ pub struct HashableState {
 pub enum ProcessState {
     Running,
     Latching,
-    Locked(RowId),
+    Locked(Lock),
     Finished,
 }
 
@@ -57,9 +57,9 @@ impl State {
     pub fn unlock_locks(&mut self) {
         let mut unlocks = vec![];
         'outer: for (i, s) in self.processes.iter().enumerate() {
-            if let ProcessState::Locked(rid) = &s {
+            if let ProcessState::Locked(lock) = &s {
                 for context in self.sql.transactions.values() {
-                    if context.locks.contains(rid) {
+                    if context.locks.contains(lock) {
                         continue 'outer;
                     }
                 }
@@ -78,13 +78,13 @@ impl State {
             let mut deq = VecDeque::from([i]);
             let mut cycle = HashSet::new();
             while let Some(x) = deq.pop_front() {
-                if let ProcessState::Locked(rid) = self.processes[x] {
+                if let ProcessState::Locked(lock) = &self.processes[x] {
                     if cycle.contains(&x) {
                         return Some(cycle);
                     }
                     cycle.insert(x);
                     for (j, context) in &self.sql.transactions {
-                        if context.locks.contains(&rid) {
+                        if context.locks.contains(lock) {
                             for (pc, k) in self.txs.iter().enumerate() {
                                 if k.id == Some(*j) {
                                     deq.push_back(pc);
@@ -98,7 +98,7 @@ impl State {
         None
     }
 
-    pub fn unlock_latches(&mut self) {
+    pub fn release_latches(&mut self) {
         if self
             .processes
             .iter()
