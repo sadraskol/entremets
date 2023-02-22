@@ -16,4 +16,5 @@ Entremets
 
    tutorial
    deadlocks
+   unicity
    background
