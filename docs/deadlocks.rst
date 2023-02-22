@@ -1,5 +1,5 @@
 Deadlocks detection
-==================
+===================
 
 Sql engine detect deadlocks and kills a transaction to break the cycle.
 :code:`entremets` supports automatic deadlock detection.
