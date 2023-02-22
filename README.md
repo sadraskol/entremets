@@ -25,7 +25,7 @@ They can be qualified as the following:
 | Repeatable Read  | Still Shit |
 | Serializable     | Shit [^1]  |
 
-[^1]: Serializable is the intuitive isolation you'd expect from a transaction. But it's performance makes it shit.
+[^1]: Serializable is the intuitive isolation you'd expect from a transaction. But its performance makes it shit.
 
 Most application uses _Read Committed_ isolation.
 
