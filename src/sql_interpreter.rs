@@ -136,7 +136,6 @@ impl RowId {
 pub enum SqlEngineError {
     Locked(Lock),
     SqlTypeError(SqlExpression, String),
-    TransactionAborted,
     UnicityViolation,
     UnknownVariable(String),
 }
@@ -329,7 +328,7 @@ impl SqlDatabase {
         let table = &relation.name;
         let rows = self.rows(&self.cur_tx, table);
 
-        let mut mutated = false;
+        let mut mutated = 0;
         for row in rows {
             if let Some(cond) = condition {
                 self.sql_context = Some(SqlContext::Where {
@@ -343,7 +342,7 @@ impl SqlDatabase {
                         table: table.clone(),
                     });
                     self.interpret(update)?;
-                    mutated = true;
+                    mutated += 1;
                 }
             } else {
                 self.sql_context = Some(SqlContext::Update {
@@ -352,16 +351,12 @@ impl SqlDatabase {
                     table: table.clone(),
                 });
                 self.interpret(update)?;
-                mutated = true;
+                mutated += 1;
             }
             self.sql_context = None;
         }
 
-        if !mutated {
-            Err(SqlEngineError::TransactionAborted)
-        } else {
-            Ok(Value::Nil)
-        }
+        Ok(Value::Integer(mutated))
     }
 
     fn interpret_select(

@@ -67,19 +67,6 @@ impl Interpreter {
     pub fn statement(&mut self, statement: &Statement) -> Res<usize> {
         match self.priv_statement(statement) {
             Err(InterpreterError::SqlEngineError(SqlEngineError::UnicityViolation)) => Ok(1),
-            Err(InterpreterError::SqlEngineError(SqlEngineError::TransactionAborted)) => {
-                let info = &self.next_state.txs[self.idx];
-                self.next_state.sql.abort(&info.id.unwrap());
-
-                if let Some(tx) = &info.name {
-                    self.next_state.locals.insert(
-                        tx.clone(),
-                        Value::Tx(Transaction(TransactionState::Aborted)),
-                    );
-                }
-                self.next_state.txs[self.idx].state = TransactionState::Aborted;
-                Ok(1)
-            }
             other => other,
         }
     }
