@@ -34,6 +34,7 @@ entremets_test! {
     not_lost_update,
     observed_transaction_vanishes,
     optimistic_lost_update,
+    optimistic_lost_update_aborted,
     predicate_many_preceders,
     unique_contraint,
     write_cycles

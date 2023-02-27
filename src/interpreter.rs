@@ -67,6 +67,10 @@ impl Interpreter {
     pub fn statement(&mut self, statement: &Statement) -> Res<usize> {
         match self.priv_statement(statement) {
             Err(InterpreterError::SqlEngineError(SqlEngineError::UnicityViolation)) => Ok(1),
+            Err(InterpreterError::SqlEngineError(SqlEngineError::Locked(lock))) => {
+                self.next_state.processes[self.idx] = ProcessState::Locked(lock);
+                return Ok(0);
+            }
             other => other,
         }
     }
@@ -116,13 +120,8 @@ impl Interpreter {
                 }
                 self.next_state.txs[self.idx].state = TransactionState::Aborted;
             }
-            Statement::Expression(expr) => match self.interpret(expr) {
-                Ok(_) => {}
-                Err(InterpreterError::SqlEngineError(SqlEngineError::Locked(lock))) => {
-                    self.next_state.processes[self.idx] = ProcessState::Locked(lock);
-                    return Ok(0);
-                }
-                Err(err) => return Err(err),
+            Statement::Expression(expr) => {
+                self.interpret(expr)?;
             },
             Statement::Latch => {
                 self.next_state.processes[self.idx] = ProcessState::Latching;

@@ -1,0 +1,29 @@
+init do
+    `insert into users (id, age) values (1, 10)`
+end
+
+process do
+    transaction tx1 read_committed do
+        let t1_age := `select age from users where id = 1`
+        if `update users set age := $t1_age + 1 where id = 1 and age = $t1_age` = 0 do
+            abort
+        else
+        end
+    end
+end
+
+process do
+    transaction tx2 read_committed do
+        let t2_age := `select age from users where id = 1`
+        if `update users set age := $t2_age * 2 where id = 1 and age = $t2_age` = 0 do
+            abort
+        else
+        end
+    end
+end
+
+property = eventually(
+ or tx1.committed and tx2.committed and `select age from users where id = 1` in {21, 22}
+ or tx1.committed and tx2.aborted and `select age from users where id = 1` = 11
+ or tx1.aborted and tx2.committed and `select age from users where id = 1` = 20
+)

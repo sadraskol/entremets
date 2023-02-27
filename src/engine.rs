@@ -91,19 +91,12 @@ impl From<InterpreterError> for CheckerError {
 
 type Res<T> = Result<T, CheckerError>;
 
-pub fn model_checker(mets: &Mets) -> Result<Report, String> {
-    match private_model_checker(mets) {
-        Ok(res) => Ok(res),
-        Err(err) => Err(format!("{err:?}")),
-    }
-}
-
 pub enum PropertyCheck {
     Always(bool),
     Eventually(bool),
 }
 
-fn private_model_checker(mets: &Mets) -> Res<Report> {
+pub fn model_checker(mets: &Mets) -> Res<Report> {
     let init_state = init_state(mets)?;
 
     let mut deq = VecDeque::from([RcState::new(init_state)]);

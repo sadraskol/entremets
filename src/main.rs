@@ -1,4 +1,5 @@
-use crate::engine::model_checker;
+use crate::engine::{model_checker, CheckerError};
+use crate::interpreter::InterpreterError;
 use crate::parser::{Parser, ParserErrorKind};
 use crate::reporter::summary;
 use std::env;
@@ -25,7 +26,15 @@ fn main() {
     match res {
         Ok(mets) => match model_checker(&mets) {
             Ok(report) => println!("{}", summary(&mets, &report)),
-            Err(message) => println!("{message}",),
+            Err(err) => match err {
+                CheckerError::InterpreterError(err) => match err {
+                    InterpreterError::Unexpected(expr) => println!("Unexpected: {expr}"),
+                    InterpreterError::TypeError(x, y, z) => {
+                        println!("Expected '{x}' to be a {z}, was {y} ")
+                    }
+                    InterpreterError::SqlEngineError(w) => println!("Sql Engine Error: {w:?}"),
+                },
+            },
         },
         Err(message) => match message.kind {
             ParserErrorKind::ParseInt(err) => println!(
