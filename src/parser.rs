@@ -95,7 +95,7 @@ pub enum SqlExpression {
     },
     Create {
         relation: Variable,
-        column: Variable,
+        columns: Vec<Variable>,
     },
     Binary {
         left: Box<SqlExpression>,
@@ -1085,17 +1085,20 @@ impl Parser {
             "Expected column declaration after relation in insert into",
         )?;
 
-        self.consume(
-            TokenKind::Identifier,
-            "Expected single column name after relation",
-        )?;
-        let column = self.make_variable();
+        let mut columns = vec![];
+        while self.matches(TokenKind::Identifier)? {
+            columns.push(self.make_variable());
+
+            if !self.matches(TokenKind::Comma)? {
+                break;
+            }
+        }
         self.consume(
             TokenKind::RightParen,
             "Expected ) closing columns declaration",
         )?;
 
-        Ok(SqlExpression::Create { relation, column })
+        Ok(SqlExpression::Create { relation, columns })
     }
 
     fn insert(&mut self) -> Res<SqlExpression> {
@@ -1253,10 +1256,10 @@ impl std::fmt::Display for SqlExpression {
 
                 f.write_str(")")
             }
-            SqlExpression::Create { relation, column } => {
+            SqlExpression::Create { relation, columns } => {
                 f.write_fmt(format_args!("create unique index on {}(", relation.name))?;
 
-                intersperse(f, &[column], ",")?;
+                intersperse(f, columns, ",")?;
 
                 f.write_str(")")
             }

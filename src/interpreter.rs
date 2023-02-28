@@ -69,7 +69,7 @@ impl Interpreter {
             Err(InterpreterError::SqlEngineError(SqlEngineError::UnicityViolation)) => Ok(1),
             Err(InterpreterError::SqlEngineError(SqlEngineError::Locked(lock))) => {
                 self.next_state.processes[self.idx] = ProcessState::Locked(lock);
-                return Ok(0);
+                Ok(0)
             }
             other => other,
         }
@@ -122,7 +122,7 @@ impl Interpreter {
             }
             Statement::Expression(expr) => {
                 self.interpret(expr)?;
-            },
+            }
             Statement::Latch => {
                 self.next_state.processes[self.idx] = ProcessState::Latching;
             }

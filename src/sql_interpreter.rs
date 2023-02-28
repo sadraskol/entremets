@@ -46,13 +46,13 @@ impl Row {
 #[derive(PartialEq, Debug, Clone)]
 enum Changes {
     Insert(String, Row),
-    Update(String, Row, String, Value),
+    Delete(String, Row),
 }
 
 #[derive(PartialEq, Eq, Debug, Clone, Hash)]
 pub enum Lock {
     RowUpdate(RowId),
-    Unique(String, String, Value),
+    Unique(String, UniqueIndex, Value),
 }
 
 #[derive(PartialEq, Debug, Clone)]
@@ -85,8 +85,28 @@ enum SqlContext {
 
 #[derive(PartialEq, Default, Debug, Clone)]
 pub struct Table {
+    pub columns: Vec<String>,
     pub rows: Vec<Row>,
-    pub unique: Vec<String>,
+    pub unique: Vec<UniqueIndex>,
+}
+
+#[derive(PartialEq, Eq, Default, Debug, Clone, Hash)]
+pub struct UniqueIndex {
+    columns: Vec<String>,
+}
+
+impl UniqueIndex {
+    fn includes(&self, name: &String) -> bool {
+        self.columns.contains(name)
+    }
+
+    fn tuple_from(&self, row: &Row) -> Value {
+        let mut tuple = vec![];
+        for c in &self.columns {
+            tuple.push(row.tuples.get(c).unwrap().clone())
+        }
+        Value::Tuple(tuple)
+    }
 }
 
 #[derive(PartialEq, Debug, Clone)]
@@ -230,9 +250,11 @@ impl SqlDatabase {
                 }
                 Ok(Value::Set(res))
             }
-            SqlExpression::Create { relation, column } => {
+            SqlExpression::Create { relation, columns } => {
                 let table = self.tables.entry(relation.name.clone()).or_default();
-                table.unique.push(column.name.clone());
+                table.unique.push(UniqueIndex {
+                    columns: columns.iter().map(|c| c.name.clone()).collect(),
+                });
                 Ok(Value::Nil)
             }
         }
@@ -290,31 +312,34 @@ impl SqlDatabase {
         }
 
         let table = &relation.name;
-        for tuple in values {
-            let mut new_row = HashMap::new();
+        for value in values {
+            let mut new_tuples = HashMap::new();
             for (i, col) in columns.iter().enumerate() {
-                self.check_unique_values(&self.cur_tx, table, &col.name, &tuple[i])?;
-                new_row.insert(col.name.clone(), tuple[i].clone());
+                new_tuples.insert(col.name.clone(), value[i].clone());
             }
+            let new_row = Row {
+                tuples: new_tuples,
+                rid: self.rid.increment(),
+            };
+            self.check_unique_values(&self.cur_tx, table, &new_row)?;
 
             let transaction = self.transactions.get_mut(&self.cur_tx).unwrap();
 
-            if let Some(t) = self.tables.get(table) {
-                for unique in &t.unique {
-                    transaction.locks.push(Lock::Unique(
-                        table.clone(),
-                        unique.clone(),
-                        new_row.get(unique).unwrap().clone(),
-                    ));
-                }
+            let t = self.tables.entry(table.clone()).or_default();
+            if t.columns.is_empty() {
+                t.columns = columns.iter().map(|c| c.name.clone()).collect();
             }
-            transaction.changes.push(Changes::Insert(
-                table.to_string(),
-                Row {
-                    tuples: new_row,
-                    rid: self.rid.increment(),
-                },
-            ));
+            for unique in &t.unique {
+                transaction.locks.push(Lock::Unique(
+                    table.clone(),
+                    unique.clone(),
+                    unique.tuple_from(&new_row),
+                ));
+            }
+
+            transaction
+                .changes
+                .push(Changes::Insert(table.to_string(), new_row));
         }
         Ok(Value::Nil)
     }
@@ -443,7 +468,11 @@ impl SqlDatabase {
                         table.rows.push(insert_row.clone());
                     }
                 }
-                Changes::Update(_, _, _, _) => {}
+                Changes::Delete(delete_table, row) => {
+                    if delete_table == table_name {
+                        table.rows.retain(|x| x != row);
+                    }
+                }
             }
         }
         table.rows
@@ -457,13 +486,9 @@ impl SqlDatabase {
                     let table = self.tables.entry(table.clone()).or_default();
                     table.rows.push(row);
                 }
-                Changes::Update(table, row, col, value) => {
+                Changes::Delete(table, row) => {
                     let table = self.tables.entry(table.clone()).or_default();
-                    for r in &mut table.rows {
-                        if r.rid == row.rid {
-                            r.tuples.insert(col.clone(), value.clone());
-                        }
-                    }
+                    table.rows.retain(|x| x != &row);
                 }
             }
         }
@@ -478,22 +503,38 @@ impl SqlDatabase {
             match sql_context {
                 SqlContext::Update { tx, table, row } => {
                     self.check_locked_row(&tx, &row)?;
-                    self.check_unique_values(&tx, &table, &name, &value)?;
+
+                    let t = self.tables.get(&table).unwrap();
+                    let mut new_tuples = HashMap::new();
+                    for col in &t.columns {
+                        if col == &name {
+                            new_tuples.insert(name.clone(), value.clone());
+                        } else {
+                            new_tuples.insert(col.clone(), row.tuples.get(col).unwrap().clone());
+                        }
+                    }
+                    let new_row = Row {
+                        tuples: new_tuples,
+                        rid: row.rid,
+                    };
+                    self.check_unique_values(&tx, &table, &new_row)?;
 
                     let transaction = self.transactions.get_mut(&tx).unwrap();
 
-                    let t = self.tables.get(&table).unwrap();
-                    if t.unique.contains(&name) {
-                        transaction.locks.push(Lock::Unique(
-                            table.clone(),
-                            name.clone(),
-                            value.clone(),
-                        ));
+                    for unique in &t.unique {
+                        if unique.includes(&name) {
+                            transaction.locks.push(Lock::Unique(
+                                table.clone(),
+                                unique.clone(),
+                                unique.tuple_from(&row),
+                            ));
+                        }
                     }
                     transaction.locks.push(Lock::RowUpdate(row.rid));
                     transaction
                         .changes
-                        .push(Changes::Update(table, row, name, value));
+                        .push(Changes::Delete(table.clone(), row));
+                    transaction.changes.push(Changes::Insert(table, new_row));
                 }
                 _ => panic!(),
             }
@@ -512,24 +553,26 @@ impl SqlDatabase {
         Ok(())
     }
 
-    fn check_unique_values(
-        &self,
-        tx: &TransactionId,
-        table: &str,
-        name: &str,
-        value: &Value,
-    ) -> Unit {
-        for (id, t) in &self.transactions {
-            let lock = Lock::Unique(table.to_string(), name.to_string(), value.clone());
-            if id != tx && t.locks.contains(&lock) {
-                return Err(SqlEngineError::Locked(lock));
+    fn check_unique_values(&self, tx: &TransactionId, table: &str, row: &Row) -> Unit {
+        for (id, tc) in &self.transactions {
+            if id == tx {
+                continue;
+            }
+            for lock in &tc.locks {
+                if let Lock::Unique(t, unique, value) = &lock {
+                    if t == table && &unique.tuple_from(row) == value {
+                        return Err(SqlEngineError::Locked(lock.clone()));
+                    }
+                }
             }
         }
 
         if let Some(t) = self.tables.get(table) {
-            for existing in &t.rows {
-                if existing.tuples.get(name) == Some(value) {
-                    return Err(SqlEngineError::UnicityViolation);
+            for unique in &t.unique {
+                for existing in &t.rows {
+                    if unique.tuple_from(existing) == unique.tuple_from(row) {
+                        return Err(SqlEngineError::UnicityViolation);
+                    }
                 }
             }
         }

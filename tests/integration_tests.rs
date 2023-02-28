@@ -31,6 +31,7 @@ entremets_test! {
     duplicate_creation,
     intermediate_reads,
     lost_update,
+    multiple_unique_contraint,
     not_lost_update,
     observed_transaction_vanishes,
     optimistic_lost_update,
