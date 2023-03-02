@@ -85,7 +85,7 @@ pub enum SqlExpression {
     },
     Update {
         relation: Variable,
-        update: Box<SqlExpression>,
+        updates: Vec<SqlExpression>,
         condition: Option<Box<SqlExpression>>,
     },
     Insert {
@@ -1055,7 +1055,13 @@ impl Parser {
 
         self.consume(TokenKind::Set, "Expected set for update expression")?;
 
-        let update = Box::new(self.sql_assignment()?);
+        let mut updates = vec![];
+        loop {
+            updates.push(self.sql_assignment()?);
+            if !self.matches(TokenKind::Comma)? {
+                break;
+            }
+        }
 
         let mut condition = None;
         if self.matches(TokenKind::Where)? {
@@ -1064,7 +1070,7 @@ impl Parser {
 
         Ok(SqlExpression::Update {
             relation,
-            update,
+            updates,
             condition,
         })
     }
@@ -1194,10 +1200,12 @@ impl std::fmt::Display for SqlExpression {
             }
             SqlExpression::Update {
                 relation,
-                update,
+                updates,
                 condition,
             } => {
-                f.write_fmt(format_args!("update {} set {}", relation.name, update))?;
+                f.write_fmt(format_args!("update {} set ", relation.name))?;
+
+                intersperse(f, updates, ",")?;
 
                 if let Some(cond) = condition {
                     f.write_fmt(format_args!(" where {cond}"))?;
@@ -1351,7 +1359,7 @@ mod test {
                 relation: Variable {
                     name: "users".to_string()
                 },
-                update: Box::new(SqlExpression::Assignment(
+                updates: vec![SqlExpression::Assignment(
                     Variable {
                         name: "age".to_string()
                     },
@@ -1362,7 +1370,7 @@ mod test {
                         operator: SqlOperator::Add,
                         right: Box::new(SqlExpression::Integer(1)),
                     }),
-                )),
+                )],
                 condition: Some(Box::new(SqlExpression::Binary {
                     left: Box::new(SqlExpression::Binary {
                         left: Box::new(SqlExpression::Var(Variable {

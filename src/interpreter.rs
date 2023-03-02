@@ -317,7 +317,7 @@ impl Interpreter {
             }
             SqlExpression::Update {
                 relation,
-                update,
+                updates,
                 condition,
             } => {
                 let condition = if let Some(cond) = condition {
@@ -325,9 +325,13 @@ impl Interpreter {
                 } else {
                     None
                 };
+                let mut res = vec![];
+                for update in updates {
+                    res.push(self.reify_up_variable(update)?);
+                }
                 Ok(SqlExpression::Update {
                     relation: relation.clone(),
-                    update: Box::new(self.reify_up_variable(update)?),
+                    updates: res,
                     condition,
                 })
             }

@@ -96,10 +96,6 @@ pub struct UniqueIndex {
 }
 
 impl UniqueIndex {
-    fn includes(&self, name: &String) -> bool {
-        self.columns.contains(name)
-    }
-
     fn tuple_from(&self, row: &Row) -> Value {
         let mut tuple = vec![];
         for c in &self.columns {
@@ -208,9 +204,9 @@ impl SqlDatabase {
             } => self.interpret_select(columns, from, condition, *locking),
             SqlExpression::Update {
                 relation,
-                update,
+                updates,
                 condition,
-            } => self.interpret_update(relation, update, condition),
+            } => self.interpret_update(relation, updates, condition),
             SqlExpression::Insert {
                 relation,
                 columns,
@@ -221,11 +217,6 @@ impl SqlDatabase {
                 operator,
                 right,
             } => self.interpret_binary(left, operator, right),
-            SqlExpression::Assignment(variable, expr) => {
-                let value = self.interpret(expr)?;
-                self.assign(variable.name.clone(), value)?;
-                Ok(Value::Nil)
-            }
             SqlExpression::Integer(i) => Ok(Value::Integer(*i)),
             SqlExpression::Tuple(values) => {
                 let mut res = vec![];
@@ -256,6 +247,9 @@ impl SqlDatabase {
                     columns: columns.iter().map(|c| c.name.clone()).collect(),
                 });
                 Ok(Value::Nil)
+            }
+            SqlExpression::Assignment(_, _) => {
+                panic!()
             }
         }
     }
@@ -347,7 +341,7 @@ impl SqlDatabase {
     fn interpret_update(
         &mut self,
         relation: &Variable,
-        update: &SqlExpression,
+        updates: &[SqlExpression],
         condition: &Option<Box<SqlExpression>>,
     ) -> Res<Value> {
         let table = &relation.name;
@@ -366,16 +360,11 @@ impl SqlDatabase {
                         row: row.clone(),
                         table: table.clone(),
                     });
-                    self.interpret(update)?;
+                    self.updates(updates, table, &row)?;
                     mutated += 1;
                 }
             } else {
-                self.sql_context = Some(SqlContext::Update {
-                    tx: self.cur_tx,
-                    row: row.clone(),
-                    table: table.clone(),
-                });
-                self.interpret(update)?;
+                self.updates(updates, table, &row)?;
                 mutated += 1;
             }
             self.sql_context = None;
@@ -498,49 +487,56 @@ impl SqlDatabase {
         self.transactions.remove(tx).unwrap();
     }
 
-    fn assign(&mut self, name: String, value: Value) -> Unit {
-        if let Some(sql_context) = self.sql_context.clone() {
-            match sql_context {
-                SqlContext::Update { tx, table, row } => {
-                    self.check_locked_row(&tx, &row)?;
+    fn updates(&mut self, updates: &[SqlExpression], table: &String, row: &Row) -> Unit {
+        self.check_locked_row(&self.cur_tx, row)?;
 
-                    let t = self.tables.get(&table).unwrap();
-                    let mut new_tuples = HashMap::new();
-                    for col in &t.columns {
-                        if col == &name {
-                            new_tuples.insert(name.clone(), value.clone());
-                        } else {
-                            new_tuples.insert(col.clone(), row.tuples.get(col).unwrap().clone());
-                        }
-                    }
-                    let new_row = Row {
-                        tuples: new_tuples,
-                        rid: row.rid,
-                    };
-                    self.check_unique_values(&tx, &table, &new_row)?;
-
-                    let transaction = self.transactions.get_mut(&tx).unwrap();
-
-                    for unique in &t.unique {
-                        if unique.includes(&name) {
-                            transaction.locks.push(Lock::Unique(
-                                table.clone(),
-                                unique.clone(),
-                                unique.tuple_from(&row),
-                            ));
-                        }
-                    }
-                    transaction.locks.push(Lock::RowUpdate(row.rid));
-                    transaction
-                        .changes
-                        .push(Changes::Delete(table.clone(), row));
-                    transaction.changes.push(Changes::Insert(table, new_row));
-                }
-                _ => panic!(),
-            }
+        let mut new_row = self.execute_assignment(row, table, &updates[0])?;
+        for update in &updates[1..] {
+            new_row = self.execute_assignment(&new_row, table, update)?;
         }
 
+        self.check_unique_values(&self.cur_tx, table, &new_row)?;
+
+        let transaction = self.transactions.get_mut(&self.cur_tx).unwrap();
+
+        let t = self.tables.get(table).unwrap();
+        for unique in &t.unique {
+            transaction.locks.push(Lock::Unique(
+                table.clone(),
+                unique.clone(),
+                unique.tuple_from(&new_row),
+            ));
+        }
+        transaction.locks.push(Lock::RowUpdate(row.rid));
+        transaction
+            .changes
+            .push(Changes::Delete(table.clone(), row.clone()));
+        transaction
+            .changes
+            .push(Changes::Insert(table.clone(), new_row.clone()));
+
         Ok(())
+    }
+
+    fn execute_assignment(&mut self, row: &Row, table: &String, expr: &SqlExpression) -> Res<Row> {
+        if let SqlExpression::Assignment(name, expr) = expr {
+            let value = self.interpret(expr)?;
+            let t = self.tables.get(table).unwrap();
+            let mut new_tuples = HashMap::new();
+            for col in &t.columns {
+                if col == &name.name {
+                    new_tuples.insert(name.name.clone(), value.clone());
+                } else {
+                    new_tuples.insert(col.clone(), row.tuples.get(col).unwrap().clone());
+                }
+            }
+            Ok(Row {
+                tuples: new_tuples,
+                rid: row.rid,
+            })
+        } else {
+            panic!()
+        }
     }
 
     fn check_locked_row(&self, tx: &TransactionId, row: &Row) -> Unit {
