@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::engine::Value;
-use crate::parser::{IsolationLevel, SelectClause, SqlExpression, SqlOperator, Variable};
+use crate::parser::{IsolationLevel, Item, SelectItem, SqlExpression, SqlOperator, Variable};
 use crate::sql_interpreter::SqlEngineError::{SqlTypeError, UnknownVariable};
 
 #[derive(Hash, Eq, PartialEq, Debug, Clone)]
@@ -17,13 +17,13 @@ pub struct Row {
 }
 
 impl Row {
-    pub fn to_value(&self, columns: &[SelectClause]) -> Value {
+    pub fn to_value(&self, columns: &[String]) -> Value {
         if columns.len() == 1 {
-            columns[0].extract(&self.tuples)
+            self.tuples.get(&columns[0]).unwrap().clone()
         } else {
             let mut res = vec![];
             for col in columns {
-                res.push(col.extract(&self.tuples))
+                res.push(self.tuples.get(col).unwrap().clone())
             }
             Value::Tuple(res)
         }
@@ -375,7 +375,7 @@ impl SqlDatabase {
 
     fn interpret_select(
         &mut self,
-        columns: &[SelectClause],
+        item_list: &[SelectItem],
         from: &Variable,
         condition: &Option<Box<SqlExpression>>,
         for_update: bool,
@@ -395,23 +395,42 @@ impl SqlDatabase {
                     transaction.locks.push(Lock::RowUpdate(row.rid));
                 }
                 if self.interpret(cond)? == Value::Bool(true) {
-                    res.push(row.to_value(columns))
+                    res.push(row)
                 }
                 self.sql_context = None;
             } else {
-                res.push(row.to_value(columns))
+                res.push(row)
             }
         }
 
-        if columns.iter().any(|col| matches!(col, SelectClause::Count)) {
+        if item_list
+            .iter()
+            .any(|col| matches!(col, SelectItem::Count(_)))
+        {
             return Ok(Value::Integer(res.len() as i16));
-        }
+        } else {
+            let mut values = vec![];
+            let table = self.tables.get(&from.name).cloned().unwrap_or_default();
+            let mut selected_columns = vec![];
+            for col in item_list {
+                match col {
+                    SelectItem::Column(item) => match item {
+                        Item::Wildcard => selected_columns.extend(table.columns.clone()),
+                        Item::Column(col) => selected_columns.push(col.clone()),
+                    },
+                    SelectItem::Count(_) => panic!(),
+                }
+            }
+            for r in res {
+                values.push(r.to_value(&selected_columns));
+            }
 
-        if res.len() == 1 {
-            return Ok(res[0].clone());
-        }
+            if values.len() == 1 {
+                return Ok(values[0].clone());
+            }
 
-        Ok(Value::Set(res))
+            Ok(Value::Set(values))
+        }
     }
 
     fn assert_integer(&mut self, expr: &SqlExpression) -> Res<i16> {

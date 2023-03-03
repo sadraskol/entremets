@@ -55,6 +55,11 @@ fn main() {
                 message.current.position.start_col,
                 message.current.lexeme
             ),
+            ParserErrorKind::AggregateError(item) => println!(
+                "Error at {file}:{}:{}: Column {item} must appear in group by",
+                message.current.position.start_line,
+                message.current.position.start_col
+            )
         },
     }
 }

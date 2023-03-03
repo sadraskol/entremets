@@ -1,7 +1,6 @@
 use std::cell::Cell;
-use std::collections::HashMap;
-use std::fmt::Debug;
 use std::fmt::Formatter;
+use std::fmt::{Debug, Write};
 use std::mem;
 use std::num::ParseIntError;
 use std::rc::Rc;
@@ -52,25 +51,31 @@ impl std::fmt::Display for Variable {
 }
 
 #[derive(PartialEq, Debug, Clone)]
-pub enum SelectClause {
-    V(Variable),
-    Count,
+pub enum SelectItem {
+    Column(Item),
+    Count(Item),
 }
 
-impl SelectClause {
-    pub fn extract(&self, row: &HashMap<String, Value>) -> Value {
+impl std::fmt::Display for SelectItem {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            SelectClause::V(variable) => row.get(&variable.name).unwrap().clone(),
-            SelectClause::Count => Value::Integer(1),
+            SelectItem::Column(item) => std::fmt::Display::fmt(item, f),
+            SelectItem::Count(item) => f.write_fmt(format_args!("count({item})")),
         }
     }
 }
 
-impl std::fmt::Display for SelectClause {
+#[derive(PartialEq, Debug, Clone)]
+pub enum Item {
+    Wildcard,
+    Column(String),
+}
+
+impl std::fmt::Display for Item {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            SelectClause::V(var) => f.write_str(&var.name),
-            SelectClause::Count => f.write_str("count(*)"),
+            Item::Wildcard => f.write_char('*'),
+            Item::Column(col) => f.write_str(col),
         }
     }
 }
@@ -78,7 +83,7 @@ impl std::fmt::Display for SelectClause {
 #[derive(PartialEq, Debug, Clone)]
 pub enum SqlExpression {
     Select {
-        columns: Vec<SelectClause>,
+        columns: Vec<SelectItem>,
         from: Variable,
         condition: Option<Box<SqlExpression>>,
         locking: bool,
@@ -166,6 +171,7 @@ pub struct Parser {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ParserErrorKind {
+    AggregateError(SelectItem),
     ParseInt(ParseIntError),
     Scanner(ScannerError),
     Unexpected(String),
@@ -1006,6 +1012,15 @@ impl Parser {
             }
         }
 
+        if columns
+            .iter()
+            .any(|col| matches!(col, SelectItem::Count(_)))
+        {
+            if let Some(item) = columns.iter().find(|x| !matches!(x, SelectItem::Count(_))) {
+                return Err(ParserErrorKind::AggregateError(item.clone()));
+            }
+        }
+
         self.consume(TokenKind::From, "Expected from clause")?;
 
         self.consume(TokenKind::Identifier, "Expected relation for select from")?;
@@ -1033,14 +1048,22 @@ impl Parser {
         })
     }
 
-    fn select_clause(&mut self) -> Res<SelectClause> {
+    fn select_clause(&mut self) -> Res<SelectItem> {
         if self.matches(TokenKind::Count)? {
             self.consume(TokenKind::LeftParen, "Expected ( after count")?;
-            self.consume(TokenKind::Identifier, "Expected identifier after count(")?;
+            let item = self.parse_select_item()?;
             self.consume(TokenKind::RightParen, "Expected ) after count")?;
-            Ok(SelectClause::Count)
+            Ok(SelectItem::Count(item))
+        } else {
+            Ok(SelectItem::Column(self.parse_select_item()?))
+        }
+    }
+
+    fn parse_select_item(&mut self) -> Res<Item> {
+        if self.matches(TokenKind::Star)? {
+            Ok(Item::Wildcard)
         } else if self.matches(TokenKind::Identifier)? {
-            Ok(SelectClause::V(self.make_variable()))
+            Ok(Item::Column(self.make_variable().name.clone()))
         } else {
             Err(ParserErrorKind::Unexpected(format!(
                 "Expected select clause, got a {:?} instead",

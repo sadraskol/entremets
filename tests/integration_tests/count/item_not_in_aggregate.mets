@@ -1,0 +1,7 @@
+init do
+    `insert into users (id, age) values (1, 10), (2, 20), (3, 30), (4, 40), (5, 50), (6, 60)`
+end
+
+process do
+    `select count(*), id from users`
+end
