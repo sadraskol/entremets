@@ -262,6 +262,11 @@ impl SqlDatabase {
         right: &SqlExpression,
     ) -> Res<Value> {
         match operator {
+            SqlOperator::And => {
+                let left = self.assert_bool(left)?;
+                let right = self.assert_bool(right)?;
+                Ok(Value::Bool(left && right))
+            }
             SqlOperator::Add => {
                 let left = self.assert_integer(left)?;
                 let right = self.assert_integer(right)?;
@@ -282,10 +287,30 @@ impl SqlDatabase {
                 let right = self.interpret(right)?;
                 Ok(Value::Bool(left == right))
             }
-            SqlOperator::And => {
-                let left = self.assert_bool(left)?;
-                let right = self.assert_bool(right)?;
-                Ok(Value::Bool(left && right))
+            SqlOperator::NotEqual => {
+                let left = self.interpret(left)?;
+                let right = self.interpret(right)?;
+                Ok(Value::Bool(left != right))
+            }
+            SqlOperator::Less => {
+                let left = self.assert_integer(left)?;
+                let right = self.assert_integer(right)?;
+                Ok(Value::Bool(left < right))
+            }
+            SqlOperator::LessEqual => {
+                let left = self.assert_integer(left)?;
+                let right = self.assert_integer(right)?;
+                Ok(Value::Bool(left <= right))
+            }
+            SqlOperator::Greater => {
+                let left = self.assert_integer(left)?;
+                let right = self.assert_integer(right)?;
+                Ok(Value::Bool(left > right))
+            }
+            SqlOperator::GreaterEqual => {
+                let left = self.assert_integer(left)?;
+                let right = self.assert_integer(right)?;
+                Ok(Value::Bool(left >= right))
             }
             SqlOperator::In => {
                 let left = self.interpret(left)?;

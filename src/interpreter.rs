@@ -294,6 +294,11 @@ impl Interpreter {
                 let right = self.assert_integer(right)?;
                 Ok(Value::Bool(left >= right))
             }
+            Operator::NotEqual => {
+                let left = self.interpret(left)?;
+                let right = self.interpret(right)?;
+                Ok(Value::Bool(right != left))
+            }
         }
     }
     fn reify_up_variable(&self, expr: &SqlExpression) -> Res<SqlExpression> {
@@ -387,7 +392,11 @@ impl Interpreter {
         if self.checking {
             None
         } else {
-            self.state.borrow().txs[self.idx].id
+            self.state
+                .borrow()
+                .txs
+                .get(self.idx)
+                .and_then(|info| info.id)
         }
     }
 }

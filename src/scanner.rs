@@ -53,6 +53,8 @@ pub enum TokenKind {
     Percent,
     // =
     Equal,
+    // <>
+    Different,
     // <-
     LeftArrow,
     // `
@@ -261,6 +263,8 @@ impl Scanner {
                         self.make_token(TokenKind::LeftArrow)
                     } else if self.matches('=') {
                         self.make_token(TokenKind::LessEqual)
+                    } else if self.matches('>') {
+                        self.make_token(TokenKind::Different)
                     } else {
                         self.make_token(TokenKind::LeftCarret)
                     }

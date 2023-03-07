@@ -144,10 +144,11 @@ pub enum Operator {
     Multiply,
     Rem,
     Equal,
+    NotEqual,
+    Less,
     LessEqual,
     Greater,
     GreaterEqual,
-    Less,
     Included,
     And,
     Or,
@@ -159,6 +160,11 @@ pub enum SqlOperator {
     Multiply,
     Rem,
     Equal,
+    NotEqual,
+    Less,
+    LessEqual,
+    Greater,
+    GreaterEqual,
     In,
     And,
 }
@@ -281,6 +287,28 @@ impl Parser {
             if next_kind == TokenKind::Newline {
                 advances += 1;
             } else if next_kind == kind {
+                for _ in 0..advances {
+                    self.advance()?;
+                }
+                return Ok(true);
+            } else {
+                return Ok(false);
+            }
+            current = clone.scan_token()?;
+        }
+    }
+
+    fn matches_forward_within(&mut self, kinds: &[TokenKind]) -> Res<bool> {
+        let mut clone = self.scanner.clone();
+        let mut advances = 1;
+        let mut current = self.current.clone();
+        loop {
+            let Token {
+                kind: next_kind, ..
+            } = current;
+            if next_kind == TokenKind::Newline {
+                advances += 1;
+            } else if kinds.contains(&next_kind) {
                 for _ in 0..advances {
                     self.advance()?;
                 }
@@ -651,13 +679,45 @@ impl Parser {
     }
 
     fn sql_equality(&mut self) -> Res<SqlExpression> {
+        let mut expr = self.sql_comparison()?;
+
+        if self.matches_forward_within(&[TokenKind::Equal, TokenKind::Different])? {
+            let operator = match self.previous.kind {
+                TokenKind::Equal => SqlOperator::Equal,
+                TokenKind::Different => SqlOperator::NotEqual,
+                _ => panic!(),
+            };
+            let right = self.sql_comparison()?;
+            expr = SqlExpression::Binary {
+                left: Box::new(expr),
+                operator,
+                right: Box::new(right),
+            };
+        }
+
+        Ok(expr)
+    }
+
+    fn sql_comparison(&mut self) -> Res<SqlExpression> {
         let mut expr = self.sql_in()?;
 
-        if self.matches_forward(TokenKind::Equal)? {
+        if self.matches_forward_within(&[
+            TokenKind::LeftCarret,
+            TokenKind::LessEqual,
+            TokenKind::GreaterEqual,
+            TokenKind::RightCarret,
+        ])? {
+            let operator = match self.previous.kind {
+                TokenKind::LeftCarret => SqlOperator::Less,
+                TokenKind::LessEqual => SqlOperator::LessEqual,
+                TokenKind::GreaterEqual => SqlOperator::GreaterEqual,
+                TokenKind::RightCarret => SqlOperator::Greater,
+                _ => panic!(),
+            };
             let right = self.sql_in()?;
             expr = SqlExpression::Binary {
                 left: Box::new(expr),
-                operator: SqlOperator::Equal,
+                operator,
                 right: Box::new(right),
             };
         }
@@ -785,11 +845,19 @@ impl Parser {
     fn equality(&mut self) -> Res<Expression> {
         let mut expr = self.comparison()?;
 
-        if self.matches(TokenKind::Equal)? {
+        if self.match_within(&[TokenKind::Equal, TokenKind::Different])? {
+            let operator = match self.previous.kind {
+                TokenKind::Equal => Ok(Operator::Equal),
+                TokenKind::Different => Ok(Operator::NotEqual),
+                _ => Err(ParserErrorKind::Unexpected(format!(
+                    "unknown equality operator: {}",
+                    self.previous.lexeme
+                ))),
+            }?;
             let right = self.comparison()?;
             expr = Expression::Binary {
                 left: Box::new(expr),
-                operator: Operator::Equal,
+                operator,
                 right: Box::new(right),
             };
         }
@@ -974,18 +1042,21 @@ impl Parser {
     }
 
     fn tuple(&mut self) -> Res<Expression> {
+        self.skip_newlines()?;
         let mut members = vec![];
-        loop {
-            let member = self.expression()?;
-            members.push(member);
+        if !self.check(TokenKind::RightParen) {
+            loop {
+                let member = self.expression()?;
+                members.push(member);
 
-            if !self.matches(TokenKind::Comma)? {
-                break;
+                if !self.matches(TokenKind::Comma)? {
+                    break;
+                }
+                self.skip_newlines()?;
             }
+            self.skip_newlines()?;
         }
-
         self.consume(TokenKind::RightParen, "Expected closing ) for tuple")?;
-
         Ok(Expression::Tuple(members))
     }
 
@@ -1275,6 +1346,11 @@ impl std::fmt::Display for SqlExpression {
                     SqlOperator::Equal => "=",
                     SqlOperator::And => "and",
                     SqlOperator::In => "in",
+                    SqlOperator::NotEqual => "<>",
+                    SqlOperator::Less => "<",
+                    SqlOperator::LessEqual => "<=",
+                    SqlOperator::Greater => ">",
+                    SqlOperator::GreaterEqual => ">=",
                 };
                 f.write_fmt(format_args!("{left} {op} {right}"))
             }
@@ -1325,6 +1401,7 @@ impl std::fmt::Display for Expression {
                     Operator::Multiply => "*",
                     Operator::Rem => "%",
                     Operator::Equal => "=",
+                    Operator::NotEqual => "<>",
                     Operator::LessEqual => "<=",
                     Operator::Less => "<",
                     Operator::Included => "in",
