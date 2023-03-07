@@ -1075,7 +1075,7 @@ impl Parser {
         if self.matches(TokenKind::Star)? {
             Ok(Item::Wildcard)
         } else if self.matches(TokenKind::Identifier)? {
-            Ok(Item::Column(self.make_variable().name.clone()))
+            Ok(Item::Column(self.make_variable().name))
         } else {
             Err(ParserErrorKind::Unexpected(format!(
                 "Expected select clause, got a {:?} instead",
@@ -1306,7 +1306,7 @@ impl std::fmt::Display for SqlExpression {
 
                 f.write_str(")")
             }
-            SqlExpression::String(s) => f.write_str(&s),
+            SqlExpression::String(s) => f.write_str(s),
         }
     }
 }

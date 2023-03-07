@@ -408,7 +408,7 @@ impl SqlDatabase {
             .iter()
             .any(|col| matches!(col, SelectItem::Count(_)))
         {
-            return Ok(Value::Integer(res.len() as i16));
+            Ok(Value::Integer(res.len() as i16))
         } else {
             let mut values = vec![];
             let table = self.tables.get(&from.name).cloned().unwrap_or_default();
