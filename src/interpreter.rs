@@ -188,9 +188,7 @@ impl Interpreter {
                     TransactionState::Committed => Ok(Value::Bool(member.name == "committed")),
                 }
             }
-            Expression::String(s) => {
-                Ok(Value::String(s.clone()))
-            }
+            Expression::String(s) => Ok(Value::String(s.clone())),
         }
     }
 

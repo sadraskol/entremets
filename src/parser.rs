@@ -1306,7 +1306,7 @@ impl std::fmt::Display for SqlExpression {
 
                 f.write_str(")")
             }
-            SqlExpression::String(s) => f.write_str(&s)
+            SqlExpression::String(s) => f.write_str(&s),
         }
     }
 }
@@ -1353,7 +1353,7 @@ impl std::fmt::Display for Expression {
             Expression::Member { call_site, member } => {
                 f.write_fmt(format_args!("{}.{}", call_site, member.name))
             }
-            Expression::String(s) => f.write_str(s)
+            Expression::String(s) => f.write_str(s),
         }
     }
 }
