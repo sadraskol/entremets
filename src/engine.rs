@@ -25,6 +25,7 @@ pub enum Value {
     Tx(Transaction),
     Bool(bool),
     Integer(i16),
+    String(String),
     Set(Vec<Value>),
     Tuple(Vec<Value>),
 }
@@ -57,6 +58,7 @@ impl std::fmt::Display for Value {
                 TransactionState::Aborted => f.write_str("aborted transaction"),
                 TransactionState::Committed => f.write_str("committed transaction"),
             },
+            Value::String(s) => f.write_str(s),
         }
     }
 }

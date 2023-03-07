@@ -251,6 +251,9 @@ impl SqlDatabase {
             SqlExpression::Assignment(_, _) => {
                 panic!()
             }
+            SqlExpression::String(s) => {
+                Ok(Value::String(s.clone()))
+            }
         }
     }
 

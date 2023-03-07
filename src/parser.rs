@@ -112,6 +112,7 @@ pub enum SqlExpression {
     Set(Vec<SqlExpression>),
     Var(Variable),
     Integer(i16),
+    String(String),
     UpVariable(Variable),
     // UpVariables are translated to value
     Value(Value),
@@ -132,6 +133,7 @@ pub enum Expression {
     Assignment(Variable, Box<Expression>),
     Var(Variable),
     Integer(i16),
+    String(String),
     Set(Vec<Expression>),
     Tuple(Vec<Expression>),
 }
@@ -727,6 +729,9 @@ impl Parser {
         if self.matches(TokenKind::Number)? {
             let i = i16::from_str(&self.previous.lexeme)?;
             Ok(SqlExpression::Integer(i))
+        } else if self.matches(TokenKind::String)? {
+            let s = self.previous.lexeme.clone();
+            Ok(SqlExpression::String(s))
         } else if self.matches(TokenKind::Dollar)? {
             self.consume(TokenKind::Identifier, "Expect identifier after $")?;
             Ok(SqlExpression::UpVariable(self.make_variable()))
@@ -895,6 +900,8 @@ impl Parser {
     fn primary(&mut self) -> Res<Expression> {
         if self.matches(TokenKind::Number)? {
             self.number()
+        } else if self.matches(TokenKind::String)? {
+            self.string()
         } else if self.matches(TokenKind::LeftBrace)? {
             self.set()
         } else if self.matches(TokenKind::LeftParen)? {
@@ -920,6 +927,11 @@ impl Parser {
     fn number(&mut self) -> Res<Expression> {
         let i = i16::from_str(&self.previous.lexeme)?;
         Ok(Expression::Integer(i))
+    }
+
+    fn string(&mut self) -> Res<Expression> {
+        let s = self.previous.lexeme.clone();
+        Ok(Expression::String(s))
     }
 
     fn set(&mut self) -> Res<Expression> {
@@ -1294,6 +1306,7 @@ impl std::fmt::Display for SqlExpression {
 
                 f.write_str(")")
             }
+            SqlExpression::String(s) => f.write_str(&s)
         }
     }
 }
@@ -1340,6 +1353,7 @@ impl std::fmt::Display for Expression {
             Expression::Member { call_site, member } => {
                 f.write_fmt(format_args!("{}.{}", call_site, member.name))
             }
+            Expression::String(s) => f.write_str(s)
         }
     }
 }

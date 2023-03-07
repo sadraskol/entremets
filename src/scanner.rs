@@ -147,8 +147,10 @@ pub enum TokenKind {
     On,
     // xxxx
     Identifier,
-    // 1111else
+    // 11112
     Number,
+    // "eriohegrhio"
+    String,
     // \eof
     Eof,
     // Error special case for the start of the parsing
@@ -264,6 +266,7 @@ impl Scanner {
                     }
                 }
                 '=' => self.make_token(TokenKind::Equal),
+                '"' => self.string(),
                 _ => self.make_error("Expected valid token"),
             }
         }
@@ -437,6 +440,16 @@ impl Scanner {
         }
 
         self.make_token(TokenKind::Number)
+    }
+
+    fn string(&mut self) -> Result<Token, ScannerError> {
+        while self.peek() != '"' {
+            self.advance();
+        }
+
+        self.advance(); // consume closing "
+
+        self.make_token(TokenKind::String)
     }
 
     fn skip_whitespace(&mut self) {

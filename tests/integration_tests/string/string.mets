@@ -1,0 +1,10 @@
+init do
+    `insert into users (id, address) values (1, "6085 Sulphur Spring Rd SE")`
+end
+
+process do
+    let new_address := "71 Lake St"
+    `update users set address := $new_address where id = 1`
+end
+
+property = eventually(`select * from users` = (1, "71 Lake St"))

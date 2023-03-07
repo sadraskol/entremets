@@ -68,3 +68,10 @@ mod count {
         item_not_in_aggregate
     }
 }
+
+mod string {
+    entremets_test! {
+        string
+    }
+}
+
