@@ -36,4 +36,4 @@ process do
     end
 end
 
-property = eventually(t1_1_age = 11 and t2_1_age = 19 and t1_2_age = 12 and t2_2_age = 18)
+property eventually(t1_1_age = 11 and t2_1_age = 19 and t1_2_age = 12 and t2_2_age = 18)

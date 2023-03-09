@@ -201,12 +201,28 @@ impl SqlDatabase {
                 from,
                 condition,
                 locking,
-            } => self.interpret_select(columns, from, condition, *locking),
+            } => self.interpret_select(
+                columns,
+                from,
+                condition.as_deref().unwrap_or(&SqlExpression::Bool(true)),
+                *locking,
+            ),
+            SqlExpression::Delete {
+                relation,
+                condition,
+            } => self.interpret_delete(
+                relation,
+                condition.as_deref().unwrap_or(&SqlExpression::Bool(true)),
+            ),
             SqlExpression::Update {
                 relation,
                 updates,
                 condition,
-            } => self.interpret_update(relation, updates, condition),
+            } => self.interpret_update(
+                relation,
+                updates,
+                condition.as_deref().unwrap_or(&SqlExpression::Bool(true)),
+            ),
             SqlExpression::Insert {
                 relation,
                 columns,
@@ -252,6 +268,7 @@ impl SqlDatabase {
                 panic!()
             }
             SqlExpression::String(s) => Ok(Value::String(s.clone())),
+            SqlExpression::Bool(b) => Ok(Value::Bool(*b)),
         }
     }
 
@@ -364,32 +381,61 @@ impl SqlDatabase {
         Ok(Value::Nil)
     }
 
+    fn interpret_delete(&mut self, relation: &Variable, condition: &SqlExpression) -> Res<Value> {
+        let table = &relation.name;
+        let rows = self.rows(&self.cur_tx, table);
+
+        let mut mutated = 0;
+        for row in &rows {
+            self.sql_context = Some(SqlContext::Where {
+                row: row.clone(),
+                table: table.clone(),
+            });
+            if self.interpret(condition)? == Value::Bool(true) {
+                self.sql_context = Some(SqlContext::Update {
+                    tx: self.cur_tx,
+                    row: row.clone(),
+                    table: table.clone(),
+                });
+
+                self.check_locked_row(&self.cur_tx, row)?;
+
+                let transaction = self.transactions.get_mut(&self.cur_tx).unwrap();
+
+                transaction.locks.push(Lock::RowUpdate(row.rid));
+                transaction
+                    .changes
+                    .push(Changes::Delete(table.clone(), row.clone()));
+
+                mutated += 1;
+            }
+            self.sql_context = None;
+        }
+
+        Ok(Value::Integer(mutated))
+    }
+
     fn interpret_update(
         &mut self,
         relation: &Variable,
         updates: &[SqlExpression],
-        condition: &Option<Box<SqlExpression>>,
+        condition: &SqlExpression,
     ) -> Res<Value> {
         let table = &relation.name;
         let rows = self.rows(&self.cur_tx, table);
 
         let mut mutated = 0;
         for row in rows {
-            if let Some(cond) = condition {
-                self.sql_context = Some(SqlContext::Where {
+            self.sql_context = Some(SqlContext::Where {
+                row: row.clone(),
+                table: table.clone(),
+            });
+            if self.interpret(condition)? == Value::Bool(true) {
+                self.sql_context = Some(SqlContext::Update {
+                    tx: self.cur_tx,
                     row: row.clone(),
                     table: table.clone(),
                 });
-                if self.interpret(cond)? == Value::Bool(true) {
-                    self.sql_context = Some(SqlContext::Update {
-                        tx: self.cur_tx,
-                        row: row.clone(),
-                        table: table.clone(),
-                    });
-                    self.updates(updates, table, &row)?;
-                    mutated += 1;
-                }
-            } else {
                 self.updates(updates, table, &row)?;
                 mutated += 1;
             }
@@ -403,30 +449,26 @@ impl SqlDatabase {
         &mut self,
         item_list: &[SelectItem],
         from: &Variable,
-        condition: &Option<Box<SqlExpression>>,
+        condition: &SqlExpression,
         for_update: bool,
     ) -> Res<Value> {
         let rows = self.rows(&self.cur_tx, &from.name);
 
         let mut res = vec![];
         for row in &rows {
-            if let Some(cond) = condition {
-                self.sql_context = Some(SqlContext::Where {
-                    row: row.clone(),
-                    table: from.name.clone(),
-                });
-                if for_update {
-                    self.check_locked_row(&self.cur_tx, row)?;
-                    let transaction = self.transactions.get_mut(&self.cur_tx).unwrap();
-                    transaction.locks.push(Lock::RowUpdate(row.rid));
-                }
-                if self.interpret(cond)? == Value::Bool(true) {
-                    res.push(row)
-                }
-                self.sql_context = None;
-            } else {
+            self.sql_context = Some(SqlContext::Where {
+                row: row.clone(),
+                table: from.name.clone(),
+            });
+            if for_update {
+                self.check_locked_row(&self.cur_tx, row)?;
+                let transaction = self.transactions.get_mut(&self.cur_tx).unwrap();
+                transaction.locks.push(Lock::RowUpdate(row.rid));
+            }
+            if self.interpret(condition)? == Value::Bool(true) {
                 res.push(row)
             }
+            self.sql_context = None;
         }
 
         if item_list

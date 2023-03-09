@@ -4,27 +4,20 @@ Roadmap
 :code:`entremets` is a slowly growing project.
 The following features need be implemented before 1.0.0 release.
 
-* Multiple column index
-* Multiple expression Update
-* Asterix
-* String constants
-* Comparison < > = ≤ ≥ <>
 * BETWEEN IN
 * NOT AND OR
 * Grouping ()
-* AS alias
-* Count Aggregate
-* Aggregate (*)
 * Delete
 * order by
 * limit
-* Select x.*
 * Parsing documentation
 * Foreign Key
 * Factor * / %
 * Addition + -
 * FOR { UPDATE | NO KEY UPDATE | SHARE | KEY SHARE }
 * True | False
+* Select x.*
+* AS alias
 * Inner join
 * Left outer join
 * right outer join

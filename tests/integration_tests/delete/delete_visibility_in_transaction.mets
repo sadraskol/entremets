@@ -1,0 +1,19 @@
+init do
+    `insert into users(id, age) values (1, 10)`
+end
+
+process do
+    transaction tx1 read_committed do
+        `delete from users where id = 1`
+        latch
+        let deleted_count := `select count(*) from users`
+        latch
+    end
+end
+
+process do
+    latch
+    let outside_count := `select count(*) from users`
+end
+
+property eventually(deleted_count = 0 and outside_count = 1)

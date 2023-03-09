@@ -53,7 +53,7 @@ Let's add a simple property:
       `update users set age := $age_2 + 1`
     end
 
-    property = eventually(`select age from users where id = 1` in {21, 22})
+    property eventually(`select age from users where id = 1` in {21, 22})
 
 Either the addition goes first, then the multiplication.
 So the :code:`age` should be 21 or 22.
@@ -105,7 +105,7 @@ The first step to fix this in SQL is to use a transaction:
       end
     end
 
-    property = eventually(`select age from users where id = 1` in {21, 22})
+    property eventually(`select age from users where id = 1` in {21, 22})
 
 But using transaction is not enough.
 Entremets can also tell that there's an issue:
@@ -167,7 +167,7 @@ SQL offers :code:`select for update` to achieve this:
       end
     end
 
-    property = eventually(`select age from users where id = 1` in {21, 22})
+    property eventually(`select age from users where id = 1` in {21, 22})
 
 And entremets tells us it cannot find issues with this code:
 

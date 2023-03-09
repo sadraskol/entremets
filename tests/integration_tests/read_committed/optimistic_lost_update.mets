@@ -18,4 +18,4 @@ process do
     end
 end
 
-property = eventually(tx1.committed and tx2.committed and `select age from users where id = 1` in {11, 20})
+property eventually(tx1.committed and tx2.committed and `select age from users where id = 1` in {11, 20})

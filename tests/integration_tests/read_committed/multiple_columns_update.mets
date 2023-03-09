@@ -6,4 +6,4 @@ process do
     `update users set age := 20, id := 2 where id = 1`
 end
 
-property = eventually(`select id, age from users` = (2, 20))
+property eventually(`select id, age from users` = (2, 20))

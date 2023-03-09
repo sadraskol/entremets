@@ -16,12 +16,12 @@ process do
     end
 end
 
-property = eventually(`select id, age from users` in {
+property eventually(`select id, age from users` in {
     {(1, 12), (2, 22)},
     {(1, 11), (2, 21)}
 })
 
-property = never(`select id, age from users` in {
+property never(`select id, age from users` in {
     {(1, 12), (2, 21)},
     {(1, 11), (2, 22)}
 })

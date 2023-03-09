@@ -6,5 +6,5 @@ process do
     `select count(*) from users`
 end
 
-property = always(`select count(*) from users` = 6)
-property = always(`select * from users` = {(1, 10), (2, 20), (3, 30), (4, 40), (5, 50), (6, 60)})
+property always(`select count(*) from users` = 6)
+property always(`select * from users` = {(1, 10), (2, 20), (3, 30), (4, 40), (5, 50), (6, 60)})

@@ -16,4 +16,4 @@ process do
     end
 end
 
-property = eventually(`select age from users where id = 1` in {21, 22})
+property eventually(`select age from users where id = 1` in {21, 22})

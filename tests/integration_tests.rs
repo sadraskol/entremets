@@ -74,3 +74,10 @@ mod string {
         string
     }
 }
+
+mod delete {
+    entremets_test! {
+        delete,
+        delete_visibility_in_transaction
+    }
+}

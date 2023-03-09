@@ -93,6 +93,10 @@ pub enum SqlExpression {
         updates: Vec<SqlExpression>,
         condition: Option<Box<SqlExpression>>,
     },
+    Delete {
+        relation: Variable,
+        condition: Option<Box<SqlExpression>>,
+    },
     Insert {
         relation: Variable,
         columns: Vec<Variable>,
@@ -113,6 +117,7 @@ pub enum SqlExpression {
     Var(Variable),
     Integer(i16),
     String(String),
+    Bool(bool),
     UpVariable(Variable),
     // UpVariables are translated to value
     Value(Value),
@@ -393,8 +398,6 @@ impl Parser {
     }
 
     fn property_declaration(&mut self) -> Unit {
-        self.consume(TokenKind::Equal, "Expected = after property declaration")?;
-
         let mut statements = vec![];
         self.statement(&mut statements)?;
         self.result.properties.push(statements.remove(0));
@@ -1067,6 +1070,8 @@ impl Parser {
             self.insert()
         } else if self.matches(TokenKind::Update)? {
             self.update()
+        } else if self.matches(TokenKind::Delete)? {
+            self.delete()
         } else if self.matches(TokenKind::Create)? {
             self.create()
         } else {
@@ -1156,7 +1161,7 @@ impl Parser {
     }
 
     fn update(&mut self) -> Res<SqlExpression> {
-        self.consume(TokenKind::Identifier, "expect relation for update")?;
+        self.consume(TokenKind::Identifier, "expected relation for update")?;
         let relation = self.make_variable();
 
         self.consume(TokenKind::Set, "Expected set for update expression")?;
@@ -1177,6 +1182,22 @@ impl Parser {
         Ok(SqlExpression::Update {
             relation,
             updates,
+            condition,
+        })
+    }
+
+    fn delete(&mut self) -> Res<SqlExpression> {
+        self.consume(TokenKind::From, "Expected from clause")?;
+        self.consume(TokenKind::Identifier, "expect relation for update")?;
+        let relation = self.make_variable();
+
+        let mut condition = None;
+        if self.matches(TokenKind::Where)? {
+            condition = Some(Box::new(self.sql_assignment()?));
+        }
+
+        Ok(SqlExpression::Delete {
+            relation,
             condition,
         })
     }
@@ -1334,6 +1355,25 @@ impl std::fmt::Display for SqlExpression {
 
                 Ok(())
             }
+            SqlExpression::Delete {
+                relation,
+                condition,
+            } => {
+                f.write_fmt(format_args!("delete from {}", relation.name))?;
+
+                if let Some(cond) = condition {
+                    f.write_fmt(format_args!(" where {cond}"))?;
+                }
+
+                Ok(())
+            }
+            SqlExpression::Create { relation, columns } => {
+                f.write_fmt(format_args!("create unique index on {}(", relation.name))?;
+
+                intersperse(f, columns, ",")?;
+
+                f.write_str(")")
+            }
             SqlExpression::Binary {
                 left,
                 operator,
@@ -1375,14 +1415,8 @@ impl std::fmt::Display for SqlExpression {
 
                 f.write_str(")")
             }
-            SqlExpression::Create { relation, columns } => {
-                f.write_fmt(format_args!("create unique index on {}(", relation.name))?;
-
-                intersperse(f, columns, ",")?;
-
-                f.write_str(")")
-            }
             SqlExpression::String(s) => f.write_str(s),
+            SqlExpression::Bool(_) => panic!(),
         }
     }
 }

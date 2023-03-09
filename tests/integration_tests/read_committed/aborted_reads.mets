@@ -9,4 +9,4 @@ process do
     end
 end
 
-property = always(`select age from users` = 10)
+property always(`select age from users` = 10)

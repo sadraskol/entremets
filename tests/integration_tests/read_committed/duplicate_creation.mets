@@ -20,5 +20,5 @@ process do
     end
 end
 
-property = eventually(`select id, age from users` in { {(1, 21)}, {(1, 22)} })
+property eventually(`select id, age from users` in { {(1, 21)}, {(1, 22)} })
 

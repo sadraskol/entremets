@@ -105,6 +105,8 @@ pub enum TokenKind {
     Where,
     // insert
     Insert,
+    // delete
+    Delete,
     // into
     Into,
     // values
@@ -315,7 +317,17 @@ impl Scanner {
                     TokenKind::Identifier
                 }
             }
-            'd' => self.check_keyword(1, "o", TokenKind::Do),
+            'd' => {
+                if self.current.index - self.start.index > 1 {
+                    match self.source.chars().nth(self.start.index + 1).unwrap() {
+                        'o' => self.check_keyword(2, "", TokenKind::Do),
+                        'e' => self.check_keyword(2, "lete", TokenKind::Delete),
+                        _ => TokenKind::Identifier,
+                    }
+                } else {
+                    TokenKind::Identifier
+                }
+            }
             'e' => {
                 if self.current.index - self.start.index > 2 {
                     match self.source.chars().nth(self.start.index + 1).unwrap() {
