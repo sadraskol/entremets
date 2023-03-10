@@ -67,7 +67,8 @@ mod read_committed {
 mod comparisons {
     entremets_test! {
         comparison,
-        between
+        between,
+        order_by
     }
 }
 

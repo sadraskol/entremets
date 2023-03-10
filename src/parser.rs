@@ -86,6 +86,7 @@ pub enum SqlExpression {
         columns: Vec<SelectItem>,
         from: Variable,
         condition: Option<Box<SqlExpression>>,
+        order_by: Option<Box<SqlExpression>>,
         locking: bool,
     },
     Update {
@@ -1138,6 +1139,13 @@ impl Parser {
             condition = Some(Box::new(expr));
         }
 
+        let mut order_by = None;
+        if self.matches(TokenKind::Order)? {
+            self.consume(TokenKind::By, "Expected by after order in select")?;
+
+            order_by = Some(Box::new(self.sql_factor()?));
+        }
+
         if self.matches(TokenKind::For)? {
             self.consume(
                 TokenKind::Update,
@@ -1150,6 +1158,7 @@ impl Parser {
             columns,
             from,
             condition,
+            order_by,
             locking,
         })
     }
@@ -1319,6 +1328,7 @@ impl std::fmt::Display for SqlExpression {
                 columns,
                 from,
                 condition,
+                order_by,
                 locking,
             } => {
                 f.write_str("select ")?;
@@ -1335,6 +1345,10 @@ impl std::fmt::Display for SqlExpression {
 
                 if let Some(cond) = condition {
                     f.write_fmt(format_args!(" where {cond}"))?;
+                }
+
+                if let Some(order) = order_by {
+                    f.write_fmt(format_args!(" order by {order}"))?;
                 }
 
                 if *locking {

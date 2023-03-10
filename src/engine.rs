@@ -7,7 +7,7 @@ use crate::parser::{Mets, Statement};
 use crate::sql_interpreter::SqlDatabase;
 use crate::state::{HashableState, ProcessState, RcState, State, TransactionInfo};
 
-#[derive(Hash, Eq, PartialEq, Debug, Clone)]
+#[derive(Hash, Eq, PartialEq, PartialOrd, Ord, Debug, Clone)]
 pub enum TransactionState {
     NotExisting,
 
@@ -16,10 +16,10 @@ pub enum TransactionState {
     Committed,
 }
 
-#[derive(Hash, Eq, PartialEq, Debug, Clone)]
+#[derive(Hash, Eq, PartialEq, PartialOrd, Ord, Debug, Clone)]
 pub struct Transaction(pub TransactionState);
 
-#[derive(Hash, Eq, PartialEq, Debug, Clone)]
+#[derive(Hash, Eq, PartialEq, PartialOrd, Ord, Debug, Clone)]
 pub enum Value {
     Nil,
     Tx(Transaction),

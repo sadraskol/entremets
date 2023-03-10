@@ -307,6 +307,7 @@ impl Interpreter {
                 columns,
                 from,
                 condition,
+                order_by,
                 locking,
             } => {
                 let condition = if let Some(cond) = condition {
@@ -317,6 +318,7 @@ impl Interpreter {
                 Ok(SqlExpression::Select {
                     columns: columns.clone(),
                     from: from.clone(),
+                    order_by: order_by.clone(),
                     condition,
                     locking: *locking,
                 })

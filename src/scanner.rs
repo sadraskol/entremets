@@ -97,12 +97,26 @@ pub enum TokenKind {
     Commit,
     // abort
     Abort,
+    // count
+    Count,
+    // create
+    Create,
+    // unique
+    Unique,
+    // index
+    Index,
+    // on
+    On,
     // select
     Select,
     // from
     From,
     // where
     Where,
+    // order,
+    Order,
+    // by
+    By,
     // insert
     Insert,
     // delete
@@ -141,21 +155,11 @@ pub enum TokenKind {
     Init,
     // let
     Let,
-    // count
-    Count,
-    // create
-    Create,
-    // unique
-    Unique,
-    // index
-    Index,
-    // on
-    On,
     // xxxx
     Identifier,
     // 11112
     Number,
-    // "eriohegrhio"
+    // 'eriohegrhio'
     String,
     // \eof
     Eof,
@@ -274,7 +278,7 @@ impl Scanner {
                     }
                 }
                 '=' => self.make_token(TokenKind::Equal),
-                '"' => self.string(),
+                '\'' => self.string(),
                 _ => self.make_error("Expected valid token"),
             }
         }
@@ -303,16 +307,14 @@ impl Scanner {
                     TokenKind::Identifier
                 }
             }
-            'b' => if self.current.index - self.start.index > 3 {
-                if self.source.chars().nth(self.start.index + 1).unwrap() == 'e' {
+            'b' => if self.current.index - self.start.index > 3 && self.source.chars().nth(self.start.index + 1).unwrap() == 'e' {
                     match self.source.chars().nth(self.start.index + 2).unwrap() {
                         'g' => self.check_keyword(3, "gin", TokenKind::Begin),
                         't' => self.check_keyword(3, "ween", TokenKind::Between),
                         _ => TokenKind::Identifier
                     }
-                } else {
-                    TokenKind::Identifier
-                }
+            } else if self.current.index - self.start.index == 2 && self.source.chars().nth(self.start.index + 1).unwrap() == 'y' {
+                TokenKind::By
             } else {
                 TokenKind::Identifier
             }
@@ -396,10 +398,11 @@ impl Scanner {
                 }
             }
             'o' => {
-                if self.current.index - self.start.index == 2 {
+                if self.current.index - self.start.index > 1 {
                     match self.source.chars().nth(self.start.index + 1).unwrap() {
-                        'r' => TokenKind::Or,
-                        'n' => TokenKind::On,
+                        'r' if self.current.index - self.start.index == 2 => TokenKind::Or,
+                        'r' => self.check_keyword(2, "der", TokenKind::Order),
+                        'n' if self.current.index - self.start.index == 2 => TokenKind::On,
                         _ => TokenKind::Identifier,
                     }
                 } else {
@@ -473,11 +476,11 @@ impl Scanner {
     }
 
     fn string(&mut self) -> Result<Token, ScannerError> {
-        while self.peek() != '"' {
+        while self.peek() != '\'' {
             self.advance();
         }
 
-        self.advance(); // consume closing "
+        self.advance(); // consume closing '
 
         self.make_token(TokenKind::String)
     }
@@ -504,12 +507,12 @@ impl Scanner {
         let length = rest.len();
         if self.current.index - self.start.index == start + length
             && rest
-                == self
-                    .source
-                    .chars()
-                    .skip(self.start.index + start)
-                    .take(length)
-                    .collect::<String>()
+            == self
+            .source
+            .chars()
+            .skip(self.start.index + start)
+            .take(length)
+            .collect::<String>()
         {
             kind
         } else {

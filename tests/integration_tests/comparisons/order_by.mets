@@ -1,0 +1,7 @@
+init do
+    `insert into users (id, age, name) values (2, 20, 'bba'), (4, 40, 'b'), (1, 10, 'c'), (3, 30, 'bb'), (6, 60, 'a'), (5, 50, 'aa')`
+end
+
+property always(`select id from users order by age` = {1, 2, 3, 4, 5, 6})
+property always(`select id from users order by id` = {1, 2, 3, 4, 5, 6})
+property always(`select id from users order by name` = {6, 5, 4, 3, 2, 1})

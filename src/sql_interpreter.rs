@@ -200,11 +200,13 @@ impl SqlDatabase {
                 columns,
                 from,
                 condition,
+                order_by,
                 locking,
             } => self.interpret_select(
                 columns,
                 from,
                 condition.as_deref().unwrap_or(&SqlExpression::Bool(true)),
+                order_by.as_deref().unwrap_or(&SqlExpression::Integer(0)),
                 *locking,
             ),
             SqlExpression::Delete {
@@ -460,6 +462,7 @@ impl SqlDatabase {
         item_list: &[SelectItem],
         from: &Variable,
         condition: &SqlExpression,
+        order_by: &SqlExpression,
         for_update: bool,
     ) -> Res<Value> {
         let rows = self.rows(&self.cur_tx, &from.name);
@@ -480,6 +483,22 @@ impl SqlDatabase {
             }
             self.sql_context = None;
         }
+
+        res.sort_by(|left, right| {
+            self.sql_context = Some(SqlContext::Where {
+                row: left.clone().clone(),
+                table: from.name.clone(),
+            });
+            let l = self.interpret(order_by).unwrap();
+
+            self.sql_context = Some(SqlContext::Where {
+                row: right.clone().clone(),
+                table: from.name.clone(),
+            });
+            let r = self.interpret(order_by).unwrap();
+
+            Ord::cmp(&l, &r)
+        });
 
         if item_list
             .iter()
