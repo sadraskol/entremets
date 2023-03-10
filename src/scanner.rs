@@ -117,6 +117,8 @@ pub enum TokenKind {
     For,
     // set
     Set,
+    // between
+    Between,
     // in
     In,
     // and
@@ -301,7 +303,19 @@ impl Scanner {
                     TokenKind::Identifier
                 }
             }
-            'b' => self.check_keyword(1, "egin", TokenKind::Begin),
+            'b' => if self.current.index - self.start.index > 3 {
+                if self.source.chars().nth(self.start.index + 1).unwrap() == 'e' {
+                    match self.source.chars().nth(self.start.index + 2).unwrap() {
+                        'g' => self.check_keyword(3, "gin", TokenKind::Begin),
+                        't' => self.check_keyword(3, "ween", TokenKind::Between),
+                        _ => TokenKind::Identifier
+                    }
+                } else {
+                    TokenKind::Identifier
+                }
+            } else {
+                TokenKind::Identifier
+            }
             'c' => {
                 if self.current.index - self.start.index > 2 {
                     match self.source.chars().nth(self.start.index + 1).unwrap() {

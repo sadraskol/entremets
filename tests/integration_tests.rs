@@ -23,9 +23,7 @@ fn test_file(module: &str, name: &str) {
         .expect("failed to execute process");
     let output = String::from_utf8(x.stdout).expect("no stdout");
 
-    let expected_output =
-        std::fs::read_to_string(expected)
-            .expect("no expected result");
+    let expected_output = std::fs::read_to_string(expected).expect("no expected result");
     assert!(
         output.contains(&expected_output),
         "testing scenario {}: {}",
@@ -63,6 +61,13 @@ mod read_committed {
         predicate_many_preceders,
         unique_contraint,
         write_cycles
+    }
+}
+
+mod comparisons {
+    entremets_test! {
+        comparison,
+        between
     }
 }
 

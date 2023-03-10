@@ -171,6 +171,7 @@ pub enum SqlOperator {
     Greater,
     GreaterEqual,
     In,
+    Between,
     And,
 }
 
@@ -729,14 +730,31 @@ impl Parser {
     }
 
     fn sql_in(&mut self) -> Res<SqlExpression> {
-        let mut expr = self.sql_factor()?;
+        let mut expr = self.sql_between()?;
 
         if self.matches_forward(TokenKind::In)? {
-            let right = self.sql_factor()?;
+            let right = self.sql_between()?;
             expr = SqlExpression::Binary {
                 left: Box::new(expr),
                 operator: SqlOperator::In,
                 right: Box::new(right),
+            };
+        }
+
+        Ok(expr)
+    }
+
+    fn sql_between(&mut self) -> Res<SqlExpression> {
+        let mut expr = self.sql_factor()?;
+
+        if self.matches_forward(TokenKind::Between)? {
+            let lower = self.sql_factor()?;
+            self.consume(TokenKind::And, "Expected and for upper bound of the between")?;
+            let upper = self.sql_factor()?;
+            expr = SqlExpression::Binary {
+                left: Box::new(expr),
+                operator: SqlOperator::Between,
+                right: Box::new(SqlExpression::Tuple(vec![lower, upper])),
             };
         }
 
@@ -1391,6 +1409,13 @@ impl std::fmt::Display for SqlExpression {
                     SqlOperator::LessEqual => "<=",
                     SqlOperator::Greater => ">",
                     SqlOperator::GreaterEqual => ">=",
+                    SqlOperator::Between => {
+                        if let SqlExpression::Tuple(tuples) = right.as_ref() {
+                            return f.write_fmt(format_args!("{left} between {} and {}", tuples[0], tuples[1]));
+                        } else {
+                            panic!()
+                        }
+                    }
                 };
                 f.write_fmt(format_args!("{left} {op} {right}"))
             }

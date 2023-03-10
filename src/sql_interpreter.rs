@@ -334,6 +334,16 @@ impl SqlDatabase {
                 let right = self.assert_set(right)?;
                 Ok(Value::Bool(right.contains(&left)))
             }
+            SqlOperator::Between => {
+                if let SqlExpression::Tuple(tuples) = (*right).clone() {
+                    let left = self.assert_integer(left)?;
+                    let lower = self.assert_integer(&tuples[0])?;
+                    let upper = self.assert_integer(&tuples[1])?;
+                    Ok(Value::Bool(left >= lower && left <= upper))
+                } else {
+                    panic!()
+                }
+            }
         }
     }
 

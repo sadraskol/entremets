@@ -1,0 +1,8 @@
+init do
+    `insert into users (id, age) values (1, 10), (2, 20), (3, 30), (4, 40), (5, 50), (6, 60)`
+end
+
+property always(`select count(*) from users where age between 0 and 70` = 6)
+property always(`select count(*) from users where age between 0 and 50` = 5)
+property always(`select count(*) from users where age between 20 and 50` = 4)
+property always(`select count(*) from users where age between 21 and 49` = 2)

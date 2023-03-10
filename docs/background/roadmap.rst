@@ -4,13 +4,10 @@ Roadmap
 :code:`entremets` is a slowly growing project.
 The following features need be implemented before 1.0.0 release.
 
-* BETWEEN IN
 * NOT AND OR
 * Grouping ()
-* Delete
 * order by
 * limit
-* Parsing documentation
 * Foreign Key
 * Factor * / %
 * Addition + -
@@ -29,7 +26,9 @@ The following features need be implemented before 1.0.0 release.
 * Returning
 * Unary + -
 * do … catch … end
+* Parsing documentation
 * State graph
+* Temporal properties
 
 The estimate for release is June 2024.
 Since this is quite some time, we also have another milestone: confronting :code:`entremets` to production like scenarios.
