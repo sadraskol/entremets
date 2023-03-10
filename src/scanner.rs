@@ -307,16 +307,22 @@ impl Scanner {
                     TokenKind::Identifier
                 }
             }
-            'b' => if self.current.index - self.start.index > 3 && self.source.chars().nth(self.start.index + 1).unwrap() == 'e' {
+            'b' => {
+                if self.current.index - self.start.index > 3
+                    && self.source.chars().nth(self.start.index + 1).unwrap() == 'e'
+                {
                     match self.source.chars().nth(self.start.index + 2).unwrap() {
                         'g' => self.check_keyword(3, "gin", TokenKind::Begin),
                         't' => self.check_keyword(3, "ween", TokenKind::Between),
-                        _ => TokenKind::Identifier
+                        _ => TokenKind::Identifier,
                     }
-            } else if self.current.index - self.start.index == 2 && self.source.chars().nth(self.start.index + 1).unwrap() == 'y' {
-                TokenKind::By
-            } else {
-                TokenKind::Identifier
+                } else if self.current.index - self.start.index == 2
+                    && self.source.chars().nth(self.start.index + 1).unwrap() == 'y'
+                {
+                    TokenKind::By
+                } else {
+                    TokenKind::Identifier
+                }
             }
             'c' => {
                 if self.current.index - self.start.index > 2 {
@@ -507,12 +513,12 @@ impl Scanner {
         let length = rest.len();
         if self.current.index - self.start.index == start + length
             && rest
-            == self
-            .source
-            .chars()
-            .skip(self.start.index + start)
-            .take(length)
-            .collect::<String>()
+                == self
+                    .source
+                    .chars()
+                    .skip(self.start.index + start)
+                    .take(length)
+                    .collect::<String>()
         {
             kind
         } else {

@@ -486,13 +486,13 @@ impl SqlDatabase {
 
         res.sort_by(|left, right| {
             self.sql_context = Some(SqlContext::Where {
-                row: left.clone().clone(),
+                row: (*left).clone(),
                 table: from.name.clone(),
             });
             let l = self.interpret(order_by).unwrap();
 
             self.sql_context = Some(SqlContext::Where {
-                row: right.clone().clone(),
+                row: (*right).clone(),
                 table: from.name.clone(),
             });
             let r = self.interpret(order_by).unwrap();

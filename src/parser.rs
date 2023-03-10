@@ -750,7 +750,10 @@ impl Parser {
 
         if self.matches_forward(TokenKind::Between)? {
             let lower = self.sql_factor()?;
-            self.consume(TokenKind::And, "Expected and for upper bound of the between")?;
+            self.consume(
+                TokenKind::And,
+                "Expected and for upper bound of the between",
+            )?;
             let upper = self.sql_factor()?;
             expr = SqlExpression::Binary {
                 left: Box::new(expr),
@@ -1425,7 +1428,10 @@ impl std::fmt::Display for SqlExpression {
                     SqlOperator::GreaterEqual => ">=",
                     SqlOperator::Between => {
                         if let SqlExpression::Tuple(tuples) = right.as_ref() {
-                            return f.write_fmt(format_args!("{left} between {} and {}", tuples[0], tuples[1]));
+                            return f.write_fmt(format_args!(
+                                "{left} between {} and {}",
+                                tuples[0], tuples[1]
+                            ));
                         } else {
                             panic!()
                         }
