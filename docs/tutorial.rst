@@ -2,7 +2,7 @@ Getting started
 ==================
 
 Install `rust <https://www.rust-lang.org/tools/install>`_.
-You can then install :code:`entremets` with :code:`cargo install entremets@0.1.0-alpha.4`
+You can then install :code:`entremets` with :code:`cargo install entremets@0.1.0-alpha.5`
 
 Let's write the first code:
 
