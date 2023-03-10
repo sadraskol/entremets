@@ -1,9 +1,21 @@
 init do
-    `insert into users(id, age) values (1, 10)`
+    `create unique index on users(id)`
 end
 
 process do
-    `delete from users where id = 1`
+    transaction tx1 read_committed do
+        `insert into users(id, age) values (1, 10)`
+        latch
+        `delete from users where id = 1`
+        `insert into users(id, age) values (1, 11)`
+    end
 end
 
-property eventually(`select * from users` = {})
+process do
+    transaction tx2 read_committed do
+        latch
+        `insert into users(id, age) values (1, 12)`
+    end
+end
+
+property eventually(`select * from users where id = 1` = (1, 11))

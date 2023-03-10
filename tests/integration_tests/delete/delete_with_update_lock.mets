@@ -3,7 +3,18 @@ init do
 end
 
 process do
-    `delete from users where id = 1`
+    transaction tx1 read_committed do
+        `delete from users where id = 1`
+        latch
+    end
+end
+
+process do
+    transaction tx2 read_committed do
+        latch
+        let updated_count := `update users set age = 11 where id = 1`
+    end
 end
 
 property eventually(`select * from users` = {})
+property eventually(updated_count = 0)

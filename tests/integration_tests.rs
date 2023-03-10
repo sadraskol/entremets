@@ -14,29 +14,33 @@ fn make_path(module: &str, name: &str) -> (String, String) {
     )
 }
 
+fn test_file(module: &str, name: &str) {
+    let (mets, expected) = make_path(module, name);
+    let x = std::process::Command::new("cargo")
+        .arg("run")
+        .arg(mets)
+        .output()
+        .expect("failed to execute process");
+    let output = String::from_utf8(x.stdout).expect("no stdout");
+
+    let expected_output =
+        std::fs::read_to_string(expected)
+            .expect("no expected result");
+    assert!(
+        output.contains(&expected_output),
+        "testing scenario {}: {}",
+        name,
+        output
+    );
+}
+
 macro_rules! entremets_test {
     ($($name:ident),*) => {
     $(
         #[test]
         fn $name() {
-            use crate::make_path;
-            let (mets, expected) = make_path(module_path!(), stringify!($name));
-            let x = std::process::Command::new("cargo")
-                .arg("run")
-                .arg(mets)
-                .output()
-                .expect("failed to execute process");
-            let output = String::from_utf8(x.stdout).expect("no stdout");
-
-            let expected_output =
-                std::fs::read_to_string(expected)
-                    .expect("no expected result");
-            assert!(
-                output.contains(&expected_output),
-                "testing scenario {}: {}",
-                stringify!($name),
-                output
-            );
+            use crate::test_file;
+            test_file(module_path!(), stringify!($name));
         }
     )*
     }
@@ -78,6 +82,8 @@ mod string {
 mod delete {
     entremets_test! {
         delete,
-        delete_visibility_in_transaction
+        delete_visibility_in_transaction,
+        delete_with_unicity,
+        delete_with_update_lock
     }
 }
