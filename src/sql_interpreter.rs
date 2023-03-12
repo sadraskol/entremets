@@ -201,12 +201,16 @@ impl SqlDatabase {
                 from,
                 condition,
                 order_by,
+                limit,
+                offset,
                 locking,
             } => self.interpret_select(
                 columns,
                 from,
                 condition.as_deref().unwrap_or(&SqlExpression::Bool(true)),
                 order_by.as_deref().unwrap_or(&SqlExpression::Integer(0)),
+                *limit,
+                offset.unwrap_or(0),
                 *locking,
             ),
             SqlExpression::Delete {
@@ -457,12 +461,15 @@ impl SqlDatabase {
         Ok(Value::Integer(mutated))
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn interpret_select(
         &mut self,
         item_list: &[SelectItem],
         from: &Variable,
         condition: &SqlExpression,
         order_by: &SqlExpression,
+        limit: Option<i16>,
+        offset: i16,
         for_update: bool,
     ) -> Res<Value> {
         let rows = self.rows(&self.cur_tx, &from.name);
@@ -499,6 +506,11 @@ impl SqlDatabase {
 
             Ord::cmp(&l, &r)
         });
+
+        res = res.into_iter().skip(offset as usize).collect();
+        if let Some(l) = limit {
+            res = res.into_iter().take(l as usize).collect();
+        }
 
         if item_list
             .iter()

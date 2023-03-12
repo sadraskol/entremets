@@ -308,6 +308,8 @@ impl Interpreter {
                 from,
                 condition,
                 order_by,
+                limit,
+                offset,
                 locking,
             } => {
                 let condition = if let Some(cond) = condition {
@@ -319,6 +321,8 @@ impl Interpreter {
                     columns: columns.clone(),
                     from: from.clone(),
                     order_by: order_by.clone(),
+                    limit: *limit,
+                    offset: *offset,
                     condition,
                     locking: *locking,
                 })

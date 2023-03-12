@@ -1,0 +1,9 @@
+init do
+    `insert into users(id, age) values (1, 10), (4, 40), (2, 20), (3, 30)`
+end
+
+property eventually(`select * from users order by id limit 2` = {(1, 10), (2, 20)})
+property eventually(`select * from users order by id limit 2` = {(1, 10), (2, 20)})
+property eventually(`select * from users order by id limit 2 offset 2` = {(3, 30), (4, 40)})
+property eventually(`select * from users order by id limit 2 offset 0` = {(1, 10), (2, 20)})
+property eventually(`select * from users order by id limit 1 offset 3` = (4, 40))

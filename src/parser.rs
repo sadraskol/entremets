@@ -87,6 +87,8 @@ pub enum SqlExpression {
         from: Variable,
         condition: Option<Box<SqlExpression>>,
         order_by: Option<Box<SqlExpression>>,
+        limit: Option<i16>,
+        offset: Option<i16>,
         locking: bool,
     },
     Update {
@@ -1149,6 +1151,20 @@ impl Parser {
             order_by = Some(Box::new(self.sql_factor()?));
         }
 
+        let mut limit = None;
+        if self.matches(TokenKind::Limit)? {
+            self.consume(TokenKind::Number, "Expected number after limit")?;
+            let i = i16::from_str(&self.previous.lexeme)?;
+            limit = Some(i);
+        }
+
+        let mut offset = None;
+        if self.matches(TokenKind::Offset)? {
+            self.consume(TokenKind::Number, "Expected number after limit")?;
+            let i = i16::from_str(&self.previous.lexeme)?;
+            offset = Some(i);
+        }
+
         if self.matches(TokenKind::For)? {
             self.consume(
                 TokenKind::Update,
@@ -1162,6 +1178,8 @@ impl Parser {
             from,
             condition,
             order_by,
+            limit,
+            offset,
             locking,
         })
     }
@@ -1332,6 +1350,8 @@ impl std::fmt::Display for SqlExpression {
                 from,
                 condition,
                 order_by,
+                limit,
+                offset,
                 locking,
             } => {
                 f.write_str("select ")?;
@@ -1352,6 +1372,14 @@ impl std::fmt::Display for SqlExpression {
 
                 if let Some(order) = order_by {
                     f.write_fmt(format_args!(" order by {order}"))?;
+                }
+
+                if let Some(lim) = limit {
+                    f.write_fmt(format_args!(" limit {lim}"))?;
+                }
+
+                if let Some(off) = offset {
+                    f.write_fmt(format_args!(" offset {off}"))?;
                 }
 
                 if *locking {

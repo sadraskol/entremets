@@ -117,6 +117,10 @@ pub enum TokenKind {
     Order,
     // by
     By,
+    // limit
+    Limit,
+    // offset
+    Offset,
     // insert
     Insert,
     // delete
@@ -397,6 +401,7 @@ impl Scanner {
                     match self.source.chars().nth(self.start.index + 1).unwrap() {
                         'a' => self.check_keyword(2, "tch", TokenKind::Latch),
                         'e' => self.check_keyword(2, "t", TokenKind::Let),
+                        'i' => self.check_keyword(2, "mit", TokenKind::Limit),
                         _ => TokenKind::Identifier,
                     }
                 } else {
@@ -406,6 +411,7 @@ impl Scanner {
             'o' => {
                 if self.current.index - self.start.index > 1 {
                     match self.source.chars().nth(self.start.index + 1).unwrap() {
+                        'f' => self.check_keyword(2, "fset", TokenKind::Offset),
                         'r' if self.current.index - self.start.index == 2 => TokenKind::Or,
                         'r' => self.check_keyword(2, "der", TokenKind::Order),
                         'n' if self.current.index - self.start.index == 2 => TokenKind::On,

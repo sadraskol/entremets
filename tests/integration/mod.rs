@@ -1,5 +1,5 @@
 fn make_path(module: &str, name: &str) -> (String, String) {
-    let mut path = std::path::PathBuf::from("tests");
+    let mut path = std::path::PathBuf::from("");
     for part in module.split("::").collect::<Vec<_>>() {
         path.push(part);
     }
@@ -16,6 +16,7 @@ fn make_path(module: &str, name: &str) -> (String, String) {
 
 fn test_file(module: &str, name: &str) {
     let (mets, expected) = make_path(module, name);
+    std::fs::File::open(&mets).expect(&format!("No file {mets}"));
     let x = std::process::Command::new("cargo")
         .arg("run")
         .arg(mets)
@@ -23,7 +24,7 @@ fn test_file(module: &str, name: &str) {
         .expect("failed to execute process");
     let output = String::from_utf8(x.stdout).expect("no stdout");
 
-    let expected_output = std::fs::read_to_string(expected).expect("no expected result");
+    let expected_output = std::fs::read_to_string(&expected).expect(&format!("no file {expected}"));
     assert!(
         output.contains(&expected_output),
         "testing scenario {}: {}",
@@ -37,7 +38,7 @@ macro_rules! entremets_test {
     $(
         #[test]
         fn $name() {
-            use crate::test_file;
+            use crate::integration::test_file;
             test_file(module_path!(), stringify!($name));
         }
     )*
@@ -91,5 +92,11 @@ mod delete {
         delete_visibility_in_transaction,
         delete_with_unicity,
         delete_with_update_lock
+    }
+}
+
+mod limit {
+    entremets_test! {
+        limit
     }
 }

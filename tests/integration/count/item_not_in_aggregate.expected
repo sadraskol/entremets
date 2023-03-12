@@ -1,0 +1,1 @@
+Error at tests/integration/count/item_not_in_aggregate.mets:6:26: Column id must appear in group by
