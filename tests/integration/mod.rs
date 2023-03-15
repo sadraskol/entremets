@@ -100,3 +100,9 @@ mod limit {
         limit
     }
 }
+
+mod group {
+    entremets_test! {
+        group
+    }
+}

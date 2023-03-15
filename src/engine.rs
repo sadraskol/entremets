@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::fmt::Formatter;
+use std::fmt::{Formatter, Write};
 
 use crate::format::intersperse;
 use crate::interpreter::{Interpreter, InterpreterError};
@@ -28,6 +28,7 @@ pub enum Value {
     String(String),
     Set(Vec<Value>),
     Tuple(Vec<Value>),
+    Scalar(Box<Value>),
 }
 
 impl std::fmt::Display for Value {
@@ -59,6 +60,11 @@ impl std::fmt::Display for Value {
                 TransactionState::Committed => f.write_str("committed transaction"),
             },
             Value::String(s) => f.write_str(s),
+            Value::Scalar(v) => {
+                f.write_char('(')?;
+                std::fmt::Display::fmt(&v, f)?;
+                f.write_char(')')
+            }
         }
     }
 }

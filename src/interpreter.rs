@@ -189,6 +189,7 @@ impl Interpreter {
                 }
             }
             Expression::String(s) => Ok(Value::String(s.clone())),
+            Expression::Scalar(expr) => Ok(Value::Scalar(Box::new(self.interpret(expr)?))),
         }
     }
 
@@ -209,6 +210,12 @@ impl Interpreter {
         let value = self.interpret(expr)?;
         if let Value::Integer(value) = value {
             Ok(value)
+        } else if let Value::Scalar(boxed) = &value {
+            if let Value::Integer(i) = *(*boxed) {
+                Ok(i)
+            } else {
+                Err(TypeError(expr.clone(), value, "integer".to_string()))
+            }
         } else {
             Err(TypeError(expr.clone(), value, "integer".to_string()))
         }
@@ -227,6 +234,12 @@ impl Interpreter {
         let value = self.interpret(expr)?;
         if let Value::Bool(value) = value {
             Ok(value)
+        } else if let Value::Scalar(boxed) = &value {
+            if let Value::Bool(b) = *(*boxed) {
+                Ok(b)
+            } else {
+                Err(TypeError(expr.clone(), value, "bool".to_string()))
+            }
         } else {
             Err(TypeError(expr.clone(), value, "bool".to_string()))
         }

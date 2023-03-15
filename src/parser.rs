@@ -114,6 +114,7 @@ pub enum SqlExpression {
         operator: SqlOperator,
         right: Box<SqlExpression>,
     },
+    Scalar(Box<SqlExpression>),
     Tuple(Vec<SqlExpression>),
     Assignment(Variable, Box<SqlExpression>),
     Set(Vec<SqlExpression>),
@@ -144,6 +145,7 @@ pub enum Expression {
     String(String),
     Set(Vec<Expression>),
     Tuple(Vec<Expression>),
+    Scalar(Box<Expression>),
 }
 
 #[derive(PartialEq, Debug, Clone)]
@@ -851,7 +853,11 @@ impl Parser {
         }
         self.consume(TokenKind::RightParen, "Expected ) to close a sql set")?;
 
-        Ok(SqlExpression::Set(members))
+        if members.len() == 1 {
+            Ok(SqlExpression::Scalar(Box::new(members.remove(0))))
+        } else {
+            Ok(SqlExpression::Set(members))
+        }
     }
 
     fn included(&mut self) -> Res<Expression> {
@@ -1084,7 +1090,12 @@ impl Parser {
             self.skip_newlines()?;
         }
         self.consume(TokenKind::RightParen, "Expected closing ) for tuple")?;
-        Ok(Expression::Tuple(members))
+
+        if members.len() == 1 {
+            Ok(Expression::Scalar(Box::new(members.remove(0))))
+        } else {
+            Ok(Expression::Tuple(members))
+        }
     }
 
     fn sql_expression(&mut self) -> Res<Expression> {
@@ -1490,6 +1501,11 @@ impl std::fmt::Display for SqlExpression {
             }
             SqlExpression::String(s) => f.write_str(s),
             SqlExpression::Bool(_) => panic!(),
+            SqlExpression::Scalar(expr) => {
+                f.write_str("(")?;
+                std::fmt::Display::fmt(expr, f)?;
+                f.write_str(")")
+            }
         }
     }
 }
@@ -1538,6 +1554,11 @@ impl std::fmt::Display for Expression {
                 f.write_fmt(format_args!("{}.{}", call_site, member.name))
             }
             Expression::String(s) => f.write_str(s),
+            Expression::Scalar(expr) => {
+                f.write_str("(")?;
+                std::fmt::Display::fmt(expr, f)?;
+                f.write_str(")")
+            }
         }
     }
 }

@@ -4,13 +4,10 @@ Roadmap
 :code:`entremets` is a slowly growing project.
 The following features need be implemented before 1.0.0 release.
 
-* NOT AND OR
-* Grouping ()
-* order by
-* limit
-* Foreign Key
+* not and or
 * Factor * / %
 * Addition + -
+* Foreign Key
 * FOR { UPDATE | NO KEY UPDATE | SHARE | KEY SHARE }
 * True | False
 * Select x.*

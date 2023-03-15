@@ -275,6 +275,7 @@ impl SqlDatabase {
             }
             SqlExpression::String(s) => Ok(Value::String(s.clone())),
             SqlExpression::Bool(b) => Ok(Value::Bool(*b)),
+            SqlExpression::Scalar(expr) => Ok(Value::Scalar(Box::new(self.interpret(expr)?))),
         }
     }
 
@@ -543,16 +544,30 @@ impl SqlDatabase {
     }
 
     fn assert_integer(&mut self, expr: &SqlExpression) -> Res<i16> {
-        if let Value::Integer(value) = self.interpret(expr)? {
+        let value = self.interpret(expr)?;
+        if let Value::Integer(value) = value {
             Ok(value)
+        } else if let Value::Scalar(boxed) = &value {
+            if let Value::Integer(i) = *(*boxed) {
+                Ok(i)
+            } else {
+                Err(SqlTypeError(expr.clone(), "integer".to_string()))
+            }
         } else {
             Err(SqlTypeError(expr.clone(), "integer".to_string()))
         }
     }
 
     fn assert_bool(&mut self, expr: &SqlExpression) -> Res<bool> {
-        if let Value::Bool(value) = self.interpret(expr)? {
+        let value = self.interpret(expr)?;
+        if let Value::Bool(value) = value {
             Ok(value)
+        } else if let Value::Scalar(boxed) = &value {
+            if let Value::Bool(b) = *(*boxed) {
+                Ok(b)
+            } else {
+                Err(SqlTypeError(expr.clone(), "integer".to_string()))
+            }
         } else {
             Err(SqlTypeError(expr.clone(), "bool".to_string()))
         }
