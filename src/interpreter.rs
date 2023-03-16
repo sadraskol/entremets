@@ -257,10 +257,20 @@ impl Interpreter {
                 let right = self.assert_integer(right)?;
                 Ok(Value::Integer(left + right))
             }
+            Operator::Subtract => {
+                let left = self.assert_integer(left)?;
+                let right = self.assert_integer(right)?;
+                Ok(Value::Integer(left - right))
+            }
             Operator::Multiply => {
                 let left = self.assert_integer(left)?;
                 let right = self.assert_integer(right)?;
                 Ok(Value::Integer(left * right))
+            }
+            Operator::Divide => {
+                let left = self.assert_integer(left)?;
+                let right = self.assert_integer(right)?;
+                Ok(Value::Integer(left / right))
             }
             Operator::Rem => {
                 let left = self.assert_integer(left)?;

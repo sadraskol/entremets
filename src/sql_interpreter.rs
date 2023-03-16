@@ -296,10 +296,20 @@ impl SqlDatabase {
                 let right = self.assert_integer(right)?;
                 Ok(Value::Integer(left + right))
             }
+            SqlOperator::Subtract => {
+                let left = self.assert_integer(left)?;
+                let right = self.assert_integer(right)?;
+                Ok(Value::Integer(left - right))
+            }
             SqlOperator::Multiply => {
                 let left = self.assert_integer(left)?;
                 let right = self.assert_integer(right)?;
                 Ok(Value::Integer(left * right))
+            }
+            SqlOperator::Divide => {
+                let left = self.assert_integer(left)?;
+                let right = self.assert_integer(right)?;
+                Ok(Value::Integer(left / right))
             }
             SqlOperator::Rem => {
                 let left = self.assert_integer(left)?;

@@ -151,7 +151,9 @@ pub enum Expression {
 #[derive(PartialEq, Debug, Clone)]
 pub enum Operator {
     Add,
+    Subtract,
     Multiply,
+    Divide,
     Rem,
     Equal,
     NotEqual,
@@ -167,7 +169,9 @@ pub enum Operator {
 #[derive(PartialEq, Debug, Clone)]
 pub enum SqlOperator {
     Add,
+    Subtract,
     Multiply,
+    Divide,
     Rem,
     Equal,
     NotEqual,
@@ -278,7 +282,7 @@ impl Parser {
         })
     }
 
-    fn match_within(&mut self, kinds: &[TokenKind]) -> Res<bool> {
+    fn matches_within(&mut self, kinds: &[TokenKind]) -> Res<bool> {
         Ok(if kinds.contains(&self.current.kind) {
             self.advance()?;
             true
@@ -626,8 +630,8 @@ impl Parser {
     fn or(&mut self) -> Res<Expression> {
         let mut expr = self.and()?;
 
-        if self.matches_forward(TokenKind::Or)? {
-            let right = self.or()?;
+        while self.matches_forward(TokenKind::Or)? {
+            let right = self.and()?;
             expr = Expression::Binary {
                 left: Box::new(expr),
                 operator: Operator::Or,
@@ -641,8 +645,8 @@ impl Parser {
     fn and(&mut self) -> Res<Expression> {
         let mut expr = self.included()?;
 
-        if self.matches_forward(TokenKind::And)? {
-            let right = self.and()?;
+        while self.matches_forward(TokenKind::And)? {
+            let right = self.included()?;
             expr = Expression::Binary {
                 left: Box::new(expr),
                 operator: Operator::And,
@@ -694,7 +698,7 @@ impl Parser {
             let operator = match self.previous.kind {
                 TokenKind::Equal => SqlOperator::Equal,
                 TokenKind::Different => SqlOperator::NotEqual,
-                _ => panic!(),
+                _ => unreachable!(),
             };
             let right = self.sql_comparison()?;
             expr = SqlExpression::Binary {
@@ -710,7 +714,7 @@ impl Parser {
     fn sql_comparison(&mut self) -> Res<SqlExpression> {
         let mut expr = self.sql_in()?;
 
-        if self.matches_forward_within(&[
+        while self.matches_forward_within(&[
             TokenKind::LeftCarret,
             TokenKind::LessEqual,
             TokenKind::GreaterEqual,
@@ -721,7 +725,7 @@ impl Parser {
                 TokenKind::LessEqual => SqlOperator::LessEqual,
                 TokenKind::GreaterEqual => SqlOperator::GreaterEqual,
                 TokenKind::RightCarret => SqlOperator::Greater,
-                _ => panic!(),
+                _ => unreachable!(),
             };
             let right = self.sql_in()?;
             expr = SqlExpression::Binary {
@@ -750,15 +754,15 @@ impl Parser {
     }
 
     fn sql_between(&mut self) -> Res<SqlExpression> {
-        let mut expr = self.sql_factor()?;
+        let mut expr = self.sql_additive()?;
 
         if self.matches_forward(TokenKind::Between)? {
-            let lower = self.sql_factor()?;
+            let lower = self.sql_additive()?;
             self.consume(
                 TokenKind::And,
                 "Expected and for upper bound of the between",
             )?;
-            let upper = self.sql_factor()?;
+            let upper = self.sql_additive()?;
             expr = SqlExpression::Binary {
                 left: Box::new(expr),
                 operator: SqlOperator::Between,
@@ -769,14 +773,19 @@ impl Parser {
         Ok(expr)
     }
 
-    fn sql_factor(&mut self) -> Res<SqlExpression> {
-        let mut expr = self.sql_add()?;
+    fn sql_additive(&mut self) -> Res<SqlExpression> {
+        let mut expr = self.sql_multiplicative()?;
 
-        if self.matches_forward(TokenKind::Star)? {
-            let right = self.sql_add()?;
+        while self.matches_forward_within(&[TokenKind::Plus, TokenKind::Minus])? {
+            let operator = match self.previous.kind {
+                TokenKind::Plus => SqlOperator::Add,
+                TokenKind::Minus => SqlOperator::Subtract,
+                _ => unreachable!(),
+            };
+            let right = self.sql_multiplicative()?;
             expr = SqlExpression::Binary {
                 left: Box::new(expr),
-                operator: SqlOperator::Multiply,
+                operator,
                 right: Box::new(right),
             };
         }
@@ -784,29 +793,24 @@ impl Parser {
         Ok(expr)
     }
 
-    fn sql_add(&mut self) -> Res<SqlExpression> {
-        let mut expr = self.sql_rem()?;
-
-        if self.matches_forward(TokenKind::Plus)? {
-            let right = self.sql_rem()?;
-            expr = SqlExpression::Binary {
-                left: Box::new(expr),
-                operator: SqlOperator::Add,
-                right: Box::new(right),
-            };
-        }
-
-        Ok(expr)
-    }
-
-    fn sql_rem(&mut self) -> Res<SqlExpression> {
+    fn sql_multiplicative(&mut self) -> Res<SqlExpression> {
         let mut expr = self.sql_primary()?;
 
-        if self.matches_forward(TokenKind::Percent)? {
+        while self.matches_forward_within(&[
+            TokenKind::Star,
+            TokenKind::Slash,
+            TokenKind::Percent,
+        ])? {
+            let operator = match self.previous.kind {
+                TokenKind::Star => SqlOperator::Multiply,
+                TokenKind::Slash => SqlOperator::Divide,
+                TokenKind::Percent => SqlOperator::Rem,
+                _ => unreachable!(),
+            };
             let right = self.sql_primary()?;
             expr = SqlExpression::Binary {
                 left: Box::new(expr),
-                operator: SqlOperator::Rem,
+                operator,
                 right: Box::new(right),
             };
         }
@@ -878,15 +882,12 @@ impl Parser {
     fn equality(&mut self) -> Res<Expression> {
         let mut expr = self.comparison()?;
 
-        if self.match_within(&[TokenKind::Equal, TokenKind::Different])? {
+        while self.matches_within(&[TokenKind::Equal, TokenKind::Different])? {
             let operator = match self.previous.kind {
-                TokenKind::Equal => Ok(Operator::Equal),
-                TokenKind::Different => Ok(Operator::NotEqual),
-                _ => Err(ParserErrorKind::Unexpected(format!(
-                    "unknown equality operator: {}",
-                    self.previous.lexeme
-                ))),
-            }?;
+                TokenKind::Equal => Operator::Equal,
+                TokenKind::Different => Operator::NotEqual,
+                _ => unreachable!(),
+            };
             let right = self.comparison()?;
             expr = Expression::Binary {
                 left: Box::new(expr),
@@ -899,25 +900,22 @@ impl Parser {
     }
 
     fn comparison(&mut self) -> Res<Expression> {
-        let mut expr = self.term()?;
+        let mut expr = self.additive()?;
 
-        if self.match_within(&[
+        while self.matches_within(&[
             TokenKind::LeftCarret,
             TokenKind::LessEqual,
             TokenKind::GreaterEqual,
             TokenKind::RightCarret,
         ])? {
             let operator = match self.previous.kind {
-                TokenKind::LessEqual => Ok(Operator::LessEqual),
-                TokenKind::GreaterEqual => Ok(Operator::GreaterEqual),
-                TokenKind::LeftCarret => Ok(Operator::Less),
-                TokenKind::RightCarret => Ok(Operator::Greater),
-                _ => Err(ParserErrorKind::Unexpected(format!(
-                    "unknown comparison operator: {}",
-                    self.previous.lexeme
-                ))),
-            }?;
-            let right = self.term()?;
+                TokenKind::LessEqual => Operator::LessEqual,
+                TokenKind::GreaterEqual => Operator::GreaterEqual,
+                TokenKind::LeftCarret => Operator::Less,
+                TokenKind::RightCarret => Operator::Greater,
+                _ => unreachable!(),
+            };
+            let right = self.additive()?;
             expr = Expression::Binary {
                 left: Box::new(expr),
                 operator,
@@ -928,14 +926,19 @@ impl Parser {
         Ok(expr)
     }
 
-    fn term(&mut self) -> Res<Expression> {
-        let mut expr = self.factor()?;
+    fn additive(&mut self) -> Res<Expression> {
+        let mut expr = self.multiplicative()?;
 
-        if self.matches(TokenKind::Plus)? {
-            let right = self.factor()?;
+        while self.matches_within(&[TokenKind::Plus, TokenKind::Minus])? {
+            let operator = match self.previous.kind {
+                TokenKind::Plus => Operator::Add,
+                TokenKind::Minus => Operator::Subtract,
+                _ => unreachable!(),
+            };
+            let right = self.multiplicative()?;
             expr = Expression::Binary {
                 left: Box::new(expr),
-                operator: Operator::Add,
+                operator,
                 right: Box::new(right),
             };
         }
@@ -943,29 +946,20 @@ impl Parser {
         Ok(expr)
     }
 
-    fn factor(&mut self) -> Res<Expression> {
-        let mut expr = self.remainder()?;
-
-        if self.matches(TokenKind::Star)? {
-            let right = self.remainder()?;
-            expr = Expression::Binary {
-                left: Box::new(expr),
-                operator: Operator::Multiply,
-                right: Box::new(right),
-            };
-        }
-
-        Ok(expr)
-    }
-
-    fn remainder(&mut self) -> Res<Expression> {
+    fn multiplicative(&mut self) -> Res<Expression> {
         let mut expr = self.unary()?;
 
-        if self.matches(TokenKind::Percent)? {
+        while self.matches_within(&[TokenKind::Star, TokenKind::Percent, TokenKind::Slash])? {
+            let operator = match self.previous.kind {
+                TokenKind::Percent => Operator::Rem,
+                TokenKind::Star => Operator::Multiply,
+                TokenKind::Slash => Operator::Divide,
+                _ => unreachable!(),
+            };
             let right = self.unary()?;
             expr = Expression::Binary {
                 left: Box::new(expr),
-                operator: Operator::Rem,
+                operator,
                 right: Box::new(right),
             };
         }
@@ -977,11 +971,11 @@ impl Parser {
         if self.matches_forward(TokenKind::Or)? || self.matches_forward(TokenKind::And)? {
             self.expression()
         } else {
-            self.member()
+            self.member_access()
         }
     }
 
-    fn member(&mut self) -> Res<Expression> {
+    fn member_access(&mut self) -> Res<Expression> {
         let mut expr = self.primary()?;
 
         if self.matches(TokenKind::Dot)? {
@@ -1159,7 +1153,7 @@ impl Parser {
         if self.matches(TokenKind::Order)? {
             self.consume(TokenKind::By, "Expected by after order in select")?;
 
-            order_by = Some(Box::new(self.sql_factor()?));
+            order_by = Some(Box::new(self.sql_multiplicative()?));
         }
 
         let mut limit = None;
@@ -1323,7 +1317,7 @@ impl Parser {
         )?;
 
         let mut values = vec![];
-        while self.matches(TokenKind::LeftParen)? {
+        while self.matches_forward(TokenKind::LeftParen)? {
             values.push(self.sql_tuple()?);
 
             if !self.matches(TokenKind::Comma)? {
@@ -1455,7 +1449,9 @@ impl std::fmt::Display for SqlExpression {
             } => {
                 let op = match operator {
                     SqlOperator::Add => "+",
+                    SqlOperator::Subtract => "-",
                     SqlOperator::Multiply => "*",
+                    SqlOperator::Divide => "/",
                     SqlOperator::Rem => "%",
                     SqlOperator::Equal => "=",
                     SqlOperator::And => "and",
@@ -1521,6 +1517,8 @@ impl std::fmt::Display for Expression {
             } => {
                 let op = match operator {
                     Operator::Add => "+",
+                    Operator::Subtract => "-",
+                    Operator::Divide => "/",
                     Operator::Multiply => "*",
                     Operator::Rem => "%",
                     Operator::Equal => "=",
@@ -1585,7 +1583,9 @@ impl std::fmt::Display for Statement {
 
 #[cfg(test)]
 mod test {
-    use crate::parser::{Expression, Parser, SqlExpression, SqlOperator, Statement, Variable};
+    use crate::parser::{
+        Expression, Operator, Parser, SqlExpression, SqlOperator, Statement, Variable,
+    };
 
     #[test]
     fn parse_sql_query() {
@@ -1633,6 +1633,48 @@ mod test {
                     }),
                 })),
             })),
+            statements[0]
+        );
+    }
+
+    #[test]
+    fn parse_multiple_addition() {
+        let mut parser = Parser::new("10 - 3 - 4\n".to_string());
+        parser.advance().unwrap();
+
+        let mut statements = vec![];
+        parser.statement(&mut statements).unwrap();
+        assert_eq!(
+            Statement::Expression(Expression::Binary {
+                left: Box::new(Expression::Binary {
+                    left: Box::new(Expression::Integer(10)),
+                    operator: Operator::Subtract,
+                    right: Box::new(Expression::Integer(3)),
+                }),
+                operator: Operator::Subtract,
+                right: Box::new(Expression::Integer(4)),
+            }),
+            statements[0]
+        );
+    }
+
+    #[test]
+    fn parse_multiple_factor() {
+        let mut parser = Parser::new("10 * 3 % 4\n".to_string());
+        parser.advance().unwrap();
+
+        let mut statements = vec![];
+        parser.statement(&mut statements).unwrap();
+        assert_eq!(
+            Statement::Expression(Expression::Binary {
+                left: Box::new(Expression::Binary {
+                    left: Box::new(Expression::Integer(10)),
+                    operator: Operator::Multiply,
+                    right: Box::new(Expression::Integer(3)),
+                }),
+                operator: Operator::Rem,
+                right: Box::new(Expression::Integer(4)),
+            }),
             statements[0]
         );
     }

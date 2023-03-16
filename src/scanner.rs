@@ -49,8 +49,12 @@ pub enum TokenKind {
     Star,
     // +
     Plus,
+    // -
+    Minus,
     // %
     Percent,
+    // /
+    Slash,
     // =
     Equal,
     // <>
@@ -253,6 +257,8 @@ impl Scanner {
                 '}' => self.make_token(TokenKind::RightBrace),
                 ',' => self.make_token(TokenKind::Comma),
                 '+' => self.make_token(TokenKind::Plus),
+                '-' => self.make_token(TokenKind::Minus),
+                '/' => self.make_token(TokenKind::Slash),
                 '%' => self.make_token(TokenKind::Percent),
                 '*' => self.make_token(TokenKind::Star),
                 '.' => self.make_token(TokenKind::Dot),

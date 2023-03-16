@@ -69,7 +69,8 @@ mod comparisons {
     entremets_test! {
         comparison,
         between,
-        order_by
+        order_by,
+        precedence
     }
 }
 

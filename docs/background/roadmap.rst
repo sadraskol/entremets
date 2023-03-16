@@ -4,12 +4,10 @@ Roadmap
 :code:`entremets` is a slowly growing project.
 The following features need be implemented before 1.0.0 release.
 
-* not and or
-* Factor * / %
-* Addition + -
 * Foreign Key
-* FOR { UPDATE | NO KEY UPDATE | SHARE | KEY SHARE }
 * True | False
+* not and or
+* FOR { UPDATE | NO KEY UPDATE | SHARE | KEY SHARE }
 * Select x.*
 * AS alias
 * Inner join
@@ -27,6 +25,5 @@ The following features need be implemented before 1.0.0 release.
 * State graph
 * Temporal properties
 
-The estimate for release is June 2024.
-Since this is quite some time, we also have another milestone: confronting :code:`entremets` to production like scenarios.
-The first milestone estimate is August 2023.
+That's a lot of work still. We estimate the work to be over at the end of summer 2023.
+The next milestone is confronting :code:`entremets` to production like scenarios.
