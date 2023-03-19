@@ -109,6 +109,13 @@ pub enum SqlExpression {
         relation: Variable,
         columns: Vec<Variable>,
     },
+    Alter {
+        constraint_name: Variable,
+        relation: Variable,
+        columns: Vec<Variable>,
+        reference_relation: Variable,
+        reference_columns: Vec<Variable>,
+    },
     Binary {
         left: Box<SqlExpression>,
         operator: SqlOperator,
@@ -1103,6 +1110,8 @@ impl Parser {
             self.delete()
         } else if self.matches(TokenKind::Create)? {
             self.create()
+        } else if self.matches(TokenKind::Alter)? {
+            self.alter()
         } else {
             Err(ParserErrorKind::Unexpected(format!(
                 "Expected sql expression, got a {:?}",
@@ -1287,6 +1296,74 @@ impl Parser {
         Ok(SqlExpression::Create { relation, columns })
     }
 
+    fn alter(&mut self) -> Res<SqlExpression> {
+        self.consume(TokenKind::Table, "Expected table after alter")?;
+
+        self.consume(TokenKind::Identifier, "Expected table name to alter")?;
+        let relation = self.make_variable();
+
+        self.consume(TokenKind::Add, "Expected add after alter table name")?;
+        self.consume(TokenKind::Constraint, "Expected constraint after add")?;
+
+        self.consume(TokenKind::Identifier, "Expected constraint name to alter")?;
+        let constraint_name = self.make_variable();
+
+        self.consume(TokenKind::Foreign, "Expected foreign after constraint name")?;
+        self.consume(TokenKind::Key, "Expected key after foreign")?;
+
+        self.consume(
+            TokenKind::LeftParen,
+            "Expected column declaration after foreign key",
+        )?;
+
+        let mut columns = vec![];
+        while self.matches(TokenKind::Identifier)? {
+            columns.push(self.make_variable());
+
+            if !self.matches(TokenKind::Comma)? {
+                break;
+            }
+        }
+        self.consume(
+            TokenKind::RightParen,
+            "Expected ) closing columns declaration",
+        )?;
+
+        self.consume(
+            TokenKind::References,
+            "Expected reference after foreign key columns",
+        )?;
+
+        self.consume(TokenKind::Identifier, "Expected table name to reference")?;
+        let reference_relation = self.make_variable();
+
+        self.consume(
+            TokenKind::LeftParen,
+            "Expected column declaration after foreign key",
+        )?;
+
+        let mut reference_columns = vec![];
+        while self.matches(TokenKind::Identifier)? {
+            reference_columns.push(self.make_variable());
+
+            if !self.matches(TokenKind::Comma)? {
+                break;
+            }
+        }
+        self.consume(
+            TokenKind::RightParen,
+            "Expected ) closing columns declaration",
+        )?;
+
+        Ok(SqlExpression::Alter {
+            constraint_name,
+            relation,
+            columns,
+            reference_relation,
+            reference_columns,
+        })
+    }
+
     fn insert(&mut self) -> Res<SqlExpression> {
         self.consume(TokenKind::Into, "Expected into after insert")?;
 
@@ -1441,6 +1518,26 @@ impl std::fmt::Display for SqlExpression {
                 intersperse(f, columns, ",")?;
 
                 f.write_str(")")
+            }
+            SqlExpression::Alter {
+                constraint_name,
+                relation,
+                columns,
+                reference_relation,
+                reference_columns,
+            } => {
+                f.write_fmt(format_args!(
+                    "alter table {} add constraint {} foreign key(",
+                    relation.name, constraint_name.name
+                ))?;
+
+                intersperse(f, columns, ",")?;
+
+                f.write_fmt(format_args!(") references {}", reference_relation.name))?;
+
+                intersperse(f, reference_columns, ",")?;
+
+                f.write_char(')')
             }
             SqlExpression::Binary {
                 left,

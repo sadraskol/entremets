@@ -1,0 +1,6 @@
+init do
+    `alter table comments add constraint users_fk foreign key(user_id) references users(id)`
+    `insert into comments(id, user_id) values (1, 1)`
+end
+
+property eventually(`select count(*) from comments` = 0)

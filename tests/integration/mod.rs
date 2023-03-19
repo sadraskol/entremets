@@ -107,3 +107,12 @@ mod group {
         group
     }
 }
+
+mod foreign_key {
+    entremets_test! {
+        delete_cascade,
+        not_working_insert,
+        not_working_update,
+        working_update
+    }
+}

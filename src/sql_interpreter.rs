@@ -95,6 +95,14 @@ pub struct UniqueIndex {
     columns: Vec<String>,
 }
 
+#[derive(PartialEq, Eq, Default, Debug, Clone, Hash)]
+pub struct ForeignKey {
+    relation: String,
+    columns: Vec<String>,
+    foreign_relation: String,
+    foreign_columns: Vec<String>,
+}
+
 impl UniqueIndex {
     fn tuple_from(&self, row: &Row) -> Value {
         let mut tuple = vec![];
@@ -109,6 +117,7 @@ impl UniqueIndex {
 pub struct SqlDatabase {
     pub cur_tx: TransactionId,
     pub tables: HashMap<String, Table>,
+    pub foreign_keys: Vec<ForeignKey>,
     pub transactions: HashMap<TransactionId, TransactionContext>,
     tx: TransactionId,
     rid: RowId,
@@ -153,6 +162,7 @@ pub enum SqlEngineError {
     Locked(Lock),
     SqlTypeError(SqlExpression, String),
     UnicityViolation,
+    ForeignKeyViolation,
     UnknownVariable(String),
 }
 
@@ -164,6 +174,7 @@ impl SqlDatabase {
         SqlDatabase {
             cur_tx: TransactionId(usize::MAX),
             tables: Default::default(),
+            foreign_keys: vec![],
             transactions: Default::default(),
             tx: TransactionId(0),
             sql_context: None,
@@ -234,6 +245,28 @@ impl SqlDatabase {
                 columns,
                 values,
             } => self.interpret_insert(relation, columns, values),
+            SqlExpression::Create { relation, columns } => {
+                let table = self.tables.entry(relation.name.clone()).or_default();
+                table.unique.push(UniqueIndex {
+                    columns: columns.iter().map(|c| c.name.clone()).collect(),
+                });
+                Ok(Value::Nil)
+            }
+            SqlExpression::Alter {
+                relation,
+                columns,
+                reference_relation,
+                reference_columns,
+                ..
+            } => {
+                self.foreign_keys.push(ForeignKey {
+                    relation: relation.name.clone(),
+                    columns: columns.iter().map(|c| c.name.clone()).collect(),
+                    foreign_relation: reference_relation.name.clone(),
+                    foreign_columns: reference_columns.iter().map(|c| c.name.clone()).collect(),
+                });
+                Ok(Value::Nil)
+            }
             SqlExpression::Binary {
                 left,
                 operator,
@@ -262,13 +295,6 @@ impl SqlDatabase {
                     res.push(self.interpret(member)?);
                 }
                 Ok(Value::Set(res))
-            }
-            SqlExpression::Create { relation, columns } => {
-                let table = self.tables.entry(relation.name.clone()).or_default();
-                table.unique.push(UniqueIndex {
-                    columns: columns.iter().map(|c| c.name.clone()).collect(),
-                });
-                Ok(Value::Nil)
             }
             SqlExpression::Assignment(_, _) => {
                 panic!()
@@ -386,6 +412,7 @@ impl SqlDatabase {
                 rid: self.rid.increment(),
             };
             self.check_unique_values(&self.cur_tx, table, &new_row)?;
+            self.check_foreign_key_respected(&self.cur_tx, table, &new_row)?;
 
             let transaction = self.transactions.get_mut(&self.cur_tx).unwrap();
 
@@ -427,12 +454,36 @@ impl SqlDatabase {
 
                 self.check_locked_row(&self.cur_tx, row)?;
 
+                let mut cascade_rows = vec![];
+                for foreign_key in &self.foreign_keys {
+                    if &foreign_key.foreign_relation == table {
+                        let foreign_rows = self.rows(&self.cur_tx, &foreign_key.relation);
+                        for cascade_row in foreign_rows {
+                            let mut p = foreign_key
+                                .foreign_columns
+                                .iter()
+                                .zip(foreign_key.columns.iter());
+                            if p.all(|(col, f_col)| {
+                                row.tuples.get(col).unwrap()
+                                    == cascade_row.tuples.get(f_col).unwrap()
+                            }) {
+                                cascade_rows.push((foreign_key.relation.clone(), cascade_row));
+                            }
+                        }
+                    }
+                }
+
                 let transaction = self.transactions.get_mut(&self.cur_tx).unwrap();
 
                 transaction.locks.push(Lock::RowUpdate(row.rid));
                 transaction
                     .changes
                     .push(Changes::Delete(table.clone(), row.clone()));
+                for (f_table, cascade_row) in cascade_rows {
+                    transaction
+                        .changes
+                        .push(Changes::Delete(f_table, cascade_row.clone()));
+                }
 
                 mutated += 1;
             }
@@ -649,6 +700,7 @@ impl SqlDatabase {
         }
 
         self.check_unique_values(&self.cur_tx, table, &new_row)?;
+        self.check_foreign_key_respected(&self.cur_tx, table, &new_row)?;
 
         let transaction = self.transactions.get_mut(&self.cur_tx).unwrap();
 
@@ -723,6 +775,27 @@ impl SqlDatabase {
                         return Err(SqlEngineError::UnicityViolation);
                     }
                 }
+            }
+        }
+        Ok(())
+    }
+
+    fn check_foreign_key_respected(&self, _tx: &TransactionId, table: &str, row: &Row) -> Unit {
+        'outer: for foreign_key in &self.foreign_keys {
+            if foreign_key.relation == table {
+                let foreign_rows = self.rows(&self.cur_tx, &foreign_key.foreign_relation);
+                for foreign_row in foreign_rows {
+                    let mut p = foreign_key
+                        .columns
+                        .iter()
+                        .zip(foreign_key.foreign_columns.iter());
+                    if p.all(|(col, f_col)| {
+                        row.tuples.get(col).unwrap() == foreign_row.tuples.get(f_col).unwrap()
+                    }) {
+                        continue 'outer;
+                    }
+                }
+                return Err(SqlEngineError::ForeignKeyViolation);
             }
         }
         Ok(())

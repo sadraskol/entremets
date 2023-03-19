@@ -1,0 +1,8 @@
+init do
+    `alter table comments add constraint users_fk foreign key(user_id) references users(id)`
+    `insert into users(id) values (1), (2)`
+    `insert into comments(id, user_id) values (1, 1)`
+    `update comments set user_id := 2 where id = 1`
+end
+
+property eventually(`select id, user_id from comments` = (1, 2))

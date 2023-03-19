@@ -67,6 +67,7 @@ impl Interpreter {
     pub fn statement(&mut self, statement: &Statement) -> Res<usize> {
         match self.priv_statement(statement) {
             Err(InterpreterError::SqlEngineError(SqlEngineError::UnicityViolation)) => Ok(1),
+            Err(InterpreterError::SqlEngineError(SqlEngineError::ForeignKeyViolation)) => Ok(1),
             Err(InterpreterError::SqlEngineError(SqlEngineError::Locked(lock))) => {
                 self.next_state.processes[self.idx] = ProcessState::Locked(lock);
                 Ok(0)

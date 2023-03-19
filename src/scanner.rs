@@ -37,141 +37,80 @@ impl Token {
 
 #[derive(PartialEq, Eq, Debug, Clone)]
 pub enum TokenKind {
-    // \n
     Newline,
-    // :=
     ColonEqual,
-    // ,
     Comma,
-    // .
     Dot,
-    // *
     Star,
-    // +
     Plus,
-    // -
     Minus,
-    // %
     Percent,
-    // /
     Slash,
-    // =
     Equal,
-    // <>
     Different,
-    // <-
     LeftArrow,
-    // `
     Backtick,
-    // $
     Dollar,
-    // <=
     LessEqual,
-    // >=
     GreaterEqual,
-    // (
     LeftParen,
-    // )
     RightParen,
-    // [
     LeftBracket,
-    // ]
     RightBracket,
-    // {
     LeftBrace,
-    // }
     RightBrace,
-    // <
     LeftCarret,
-    // >
     RightCarret,
-    // if
     If,
-    // else
     Else,
-    // do
     Do,
-    // end
     End,
-    // transaction
     Transaction,
-    // begin
     Begin,
-    // commit
     Commit,
-    // abort
     Abort,
-    // count
     Count,
-    // create
     Create,
-    // unique
     Unique,
-    // index
     Index,
-    // on
     On,
-    // select
     Select,
-    // from
     From,
-    // where
     Where,
-    // order,
     Order,
-    // by
     By,
-    // limit
     Limit,
-    // offset
     Offset,
-    // insert
     Insert,
-    // delete
     Delete,
-    // into
     Into,
-    // values
     Values,
-    // update
     Update,
-    // for
     For,
-    // set
     Set,
-    // between
     Between,
-    // in
+    Alter,
+    Table,
+    Add,
+    Constraint,
+    Foreign,
+    Key,
+    References,
     In,
-    // and
     And,
-    // or
     Or,
-    // always
     Always,
-    // never,
     Never,
-    // eventually
     Eventually,
-    // property
     Property,
-    // process
     Process,
-    // latch
     Latch,
-    // init
     Init,
-    // let
     Let,
-    // xxxx
     Identifier,
-    // 11112
     Number,
-    // 'eriohegrhio'
     String,
-    // \eof
     Eof,
-    // Error special case for the start of the parsing
     Error,
 }
 
@@ -308,9 +247,14 @@ impl Scanner {
             'a' => {
                 if self.current.index - self.start.index > 2 {
                     match self.source.chars().nth(self.start.index + 1).unwrap() {
-                        'n' => self.check_keyword(2, "d", TokenKind::And),
                         'b' => self.check_keyword(2, "ort", TokenKind::Abort),
-                        'l' => self.check_keyword(2, "ways", TokenKind::Always),
+                        'd' => self.check_keyword(2, "d", TokenKind::Add),
+                        'n' => self.check_keyword(2, "d", TokenKind::And),
+                        'l' => match self.source.chars().nth(self.start.index + 2).unwrap() {
+                            'w' => self.check_keyword(3, "ays", TokenKind::Always),
+                            't' => self.check_keyword(3, "er", TokenKind::Alter),
+                            _ => TokenKind::Identifier,
+                        },
                         _ => TokenKind::Identifier,
                     }
                 } else {
@@ -339,6 +283,7 @@ impl Scanner {
                     match self.source.chars().nth(self.start.index + 1).unwrap() {
                         'o' => match self.source.chars().nth(self.start.index + 2).unwrap() {
                             'm' => self.check_keyword(3, "mit", TokenKind::Commit),
+                            'n' => self.check_keyword(3, "straint", TokenKind::Constraint),
                             'u' => self.check_keyword(3, "nt", TokenKind::Count),
                             _ => TokenKind::Identifier,
                         },
@@ -375,7 +320,12 @@ impl Scanner {
             'f' => {
                 if self.current.index - self.start.index > 2 {
                     match self.source.chars().nth(self.start.index + 1).unwrap() {
-                        'o' => self.check_keyword(2, "r", TokenKind::For),
+                        'o' if self.current.index - self.start.index == 3 => {
+                            self.check_keyword(2, "r", TokenKind::For)
+                        }
+                        'o' if self.current.index - self.start.index > 3 => {
+                            self.check_keyword(2, "reign", TokenKind::Foreign)
+                        }
                         'r' => self.check_keyword(2, "om", TokenKind::From),
                         _ => TokenKind::Identifier,
                     }
@@ -401,6 +351,7 @@ impl Scanner {
                 },
                 _ => TokenKind::Identifier,
             },
+            'k' => self.check_keyword(1, "ey", TokenKind::Key),
             'n' => self.check_keyword(1, "ever", TokenKind::Never),
             'l' => {
                 if self.current.index - self.start.index > 1 {
@@ -449,6 +400,7 @@ impl Scanner {
                     TokenKind::Identifier
                 }
             }
+            'r' => self.check_keyword(1, "eferences", TokenKind::References),
             's' => {
                 if self
                     .source
@@ -467,7 +419,17 @@ impl Scanner {
                     TokenKind::Identifier
                 }
             }
-            't' => self.check_keyword(1, "ransaction", TokenKind::Transaction),
+            't' => {
+                if self.current.index - self.start.index > 3 {
+                    match self.source.chars().nth(self.start.index + 1).unwrap() {
+                        'a' => self.check_keyword(2, "ble", TokenKind::Table),
+                        'r' => self.check_keyword(2, "ansaction", TokenKind::Transaction),
+                        _ => TokenKind::Identifier,
+                    }
+                } else {
+                    TokenKind::Identifier
+                }
+            }
             'u' => {
                 if self.current.index - self.start.index > 5 {
                     match self.source.chars().nth(self.start.index + 1).unwrap() {
