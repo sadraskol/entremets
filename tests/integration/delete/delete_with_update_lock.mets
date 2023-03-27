@@ -12,7 +12,7 @@ end
 process do
     transaction tx2 read_committed do
         latch
-        let updated_count := `update users set age = 11 where id = 1`
+        let updated_count := `update users set age := 11 where id = 1`
     end
 end
 

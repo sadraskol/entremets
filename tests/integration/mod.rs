@@ -111,6 +111,8 @@ mod group {
 mod foreign_key {
     entremets_test! {
         delete_cascade,
+        non_existing_foreign_key,
+        concurrent_deletion_and_insert,
         not_working_insert,
         not_working_update,
         working_update

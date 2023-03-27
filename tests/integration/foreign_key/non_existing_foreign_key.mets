@@ -1,0 +1,20 @@
+init do
+    `alter table comments add constraint users_fk foreign key(user_id) references users(id)`
+end
+
+process do
+    transaction tx1 read_committed do
+        latch
+        `insert into comments(id, user_id) values (1, 1)`
+    end
+end
+
+process do
+    transaction tx2 read_committed do
+        latch
+        `insert into users(id) values (1)`
+        latch
+    end
+end
+
+property eventually(`select id from users` = 1 and `select count(*) from comments` = 0)

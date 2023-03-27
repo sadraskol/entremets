@@ -1,6 +1,5 @@
 use crate::engine::{Report, Violation};
 use crate::parser::Mets;
-use crate::sql_interpreter::SqlDatabase;
 
 pub fn summary(mets: &Mets, report: &Report) -> String {
     let mut base = if let Some(violation) = &report.violation {
@@ -41,10 +40,6 @@ pub fn summary(mets: &Mets, report: &Report) -> String {
         traces.reverse();
 
         let mut last_trace = traces[0].borrow();
-        if !last_trace.locals.is_empty() {
-            x.push_str(&format!("Local State {:?}\n", last_trace.locals));
-        }
-        x.push_str(&sql_summary(&last_trace.sql));
 
         for trace in &traces[1..] {
             let trace = trace.borrow();
@@ -58,10 +53,6 @@ pub fn summary(mets: &Mets, report: &Report) -> String {
                     mets.processes[index][trace.pc[index] - 1]
                 ));
             }
-            if !trace.locals.is_empty() {
-                x.push_str(&format!("Local State {:?}\n", trace.locals));
-            }
-            x.push_str(&sql_summary(&trace.sql));
             last_trace = trace;
         }
         x
@@ -73,30 +64,3 @@ pub fn summary(mets: &Mets, report: &Report) -> String {
     base
 }
 
-fn sql_summary(global: &SqlDatabase) -> String {
-    let mut x = String::new();
-    for (table_name, table) in global.tables.iter() {
-        x.push_str(&format!("{table_name}: {{"));
-
-        let mut x1 = table.rows.iter().peekable();
-        while let Some(row) = x1.next() {
-            x.push('(');
-            let values = row.values();
-            let mut enumerate = values.iter().enumerate().peekable();
-            while let Some((i, _)) = enumerate.next() {
-                x.push_str(&format!("{}: {}", row.keys()[i], row.values()[i]));
-                if enumerate.peek().is_some() {
-                    x.push_str(", ");
-                }
-            }
-            x.push(')');
-
-            if x1.peek().is_some() {
-                x.push_str(", ");
-            }
-        }
-        x.push_str("}\n");
-    }
-
-    x
-}

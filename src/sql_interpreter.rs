@@ -29,14 +29,6 @@ impl Row {
         }
     }
 
-    pub fn keys(&self) -> Vec<String> {
-        self.tuples.keys().cloned().collect()
-    }
-
-    pub fn values(&self) -> Vec<Value> {
-        self.tuples.values().cloned().collect()
-    }
-
     fn hash(self) -> HashableRow {
         let (keys, values): (Vec<String>, Vec<Value>) = self.tuples.into_iter().unzip();
         HashableRow { keys, values }
@@ -52,7 +44,22 @@ enum Changes {
 #[derive(PartialEq, Eq, Debug, Clone, Hash)]
 pub enum Lock {
     RowUpdate(RowId),
+    RowForKeyShare(RowId),
     Unique(String, UniqueIndex, Value),
+}
+
+impl Lock {
+    fn conflicts(&self, existing_lock: &Self) -> bool {
+        match self {
+            Lock::RowUpdate(rid) => match existing_lock {
+                Lock::RowUpdate(r) => r == rid,
+                Lock::RowForKeyShare(r) => r == rid,
+                Lock::Unique(_, _, _) => false,
+            },
+            Lock::RowForKeyShare(rid) => matches!(existing_lock, Lock::RowUpdate(r) if r == rid),
+            Lock::Unique(_, _, _) => false
+        }
+    }
 }
 
 #[derive(PartialEq, Debug, Clone)]
@@ -411,8 +418,12 @@ impl SqlDatabase {
                 tuples: new_tuples,
                 rid: self.rid.increment(),
             };
-            self.check_unique_values(&self.cur_tx, table, &new_row)?;
-            self.check_foreign_key_respected(&self.cur_tx, table, &new_row)?;
+            self.check_unique_values(table, &new_row)?;
+            let foreign_rows = self.check_foreign_key(table, &new_row)?;
+
+            for rid in foreign_rows {
+                self.request_row_lock(Lock::RowForKeyShare(rid))?;
+            }
 
             let transaction = self.transactions.get_mut(&self.cur_tx).unwrap();
 
@@ -452,8 +463,6 @@ impl SqlDatabase {
                     table: table.clone(),
                 });
 
-                self.check_locked_row(&self.cur_tx, row)?;
-
                 let mut cascade_rows = vec![];
                 for foreign_key in &self.foreign_keys {
                     if &foreign_key.foreign_relation == table {
@@ -473,9 +482,10 @@ impl SqlDatabase {
                     }
                 }
 
+                self.request_row_lock(Lock::RowUpdate(row.rid))?;
+
                 let transaction = self.transactions.get_mut(&self.cur_tx).unwrap();
 
-                transaction.locks.push(Lock::RowUpdate(row.rid));
                 transaction
                     .changes
                     .push(Changes::Delete(table.clone(), row.clone()));
@@ -543,9 +553,7 @@ impl SqlDatabase {
                 table: from.name.clone(),
             });
             if for_update {
-                self.check_locked_row(&self.cur_tx, row)?;
-                let transaction = self.transactions.get_mut(&self.cur_tx).unwrap();
-                transaction.locks.push(Lock::RowUpdate(row.rid));
+                self.request_row_lock(Lock::RowUpdate(row.rid))?;
             }
             if self.interpret(condition)? == Value::Bool(true) {
                 res.push(row)
@@ -692,15 +700,18 @@ impl SqlDatabase {
     }
 
     fn updates(&mut self, updates: &[SqlExpression], table: &String, row: &Row) -> Unit {
-        self.check_locked_row(&self.cur_tx, row)?;
-
         let mut new_row = self.execute_assignment(row, table, &updates[0])?;
         for update in &updates[1..] {
             new_row = self.execute_assignment(&new_row, table, update)?;
         }
 
-        self.check_unique_values(&self.cur_tx, table, &new_row)?;
-        self.check_foreign_key_respected(&self.cur_tx, table, &new_row)?;
+        self.check_unique_values(table, &new_row)?;
+
+        let foreign_rows = self.check_foreign_key(table, &new_row)?;
+        for rid in foreign_rows {
+            self.request_row_lock(Lock::RowForKeyShare(rid))?;
+        }
+        self.request_row_lock(Lock::RowUpdate(row.rid))?;
 
         let transaction = self.transactions.get_mut(&self.cur_tx).unwrap();
 
@@ -712,7 +723,6 @@ impl SqlDatabase {
                 unique.tuple_from(&new_row),
             ));
         }
-        transaction.locks.push(Lock::RowUpdate(row.rid));
         transaction
             .changes
             .push(Changes::Delete(table.clone(), row.clone()));
@@ -740,23 +750,24 @@ impl SqlDatabase {
                 rid: row.rid,
             })
         } else {
-            panic!()
+            panic!("{expr}")
         }
     }
 
-    fn check_locked_row(&self, tx: &TransactionId, row: &Row) -> Unit {
+    fn request_row_lock(&mut self, requested_lock: Lock) -> Unit {
         for (id, t) in &self.transactions {
-            let lock = Lock::RowUpdate(row.rid);
-            if id != tx && t.locks.contains(&lock) {
-                return Err(SqlEngineError::Locked(lock));
+            if id != &self.cur_tx && t.locks.iter().any(|l| requested_lock.conflicts(l)) {
+                return Err(SqlEngineError::Locked(requested_lock));
             }
         }
+        let tx = self.transactions.get_mut(&self.cur_tx).unwrap();
+        tx.locks.push(requested_lock);
         Ok(())
     }
 
-    fn check_unique_values(&self, tx: &TransactionId, table: &str, row: &Row) -> Unit {
+    fn check_unique_values(&self, table: &str, row: &Row) -> Unit {
         for (id, tc) in &self.transactions {
-            if id == tx {
+            if id == &self.cur_tx {
                 continue;
             }
             for lock in &tc.locks {
@@ -780,7 +791,8 @@ impl SqlDatabase {
         Ok(())
     }
 
-    fn check_foreign_key_respected(&self, _tx: &TransactionId, table: &str, row: &Row) -> Unit {
+    fn check_foreign_key(&self, table: &str, row: &Row) -> Res<Vec<RowId>> {
+        let mut res = vec![];
         'outer: for foreign_key in &self.foreign_keys {
             if foreign_key.relation == table {
                 let foreign_rows = self.rows(&self.cur_tx, &foreign_key.foreign_relation);
@@ -792,12 +804,13 @@ impl SqlDatabase {
                     if p.all(|(col, f_col)| {
                         row.tuples.get(col).unwrap() == foreign_row.tuples.get(f_col).unwrap()
                     }) {
+                        res.push(foreign_row.rid.clone());
                         continue 'outer;
                     }
                 }
                 return Err(SqlEngineError::ForeignKeyViolation);
             }
         }
-        Ok(())
+        Ok(res)
     }
 }
