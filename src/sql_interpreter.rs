@@ -57,7 +57,7 @@ impl Lock {
                 Lock::Unique(_, _, _) => false,
             },
             Lock::RowForKeyShare(rid) => matches!(existing_lock, Lock::RowUpdate(r) if r == rid),
-            Lock::Unique(_, _, _) => false
+            Lock::Unique(_, _, _) => false,
         }
     }
 }
@@ -804,7 +804,7 @@ impl SqlDatabase {
                     if p.all(|(col, f_col)| {
                         row.tuples.get(col).unwrap() == foreign_row.tuples.get(f_col).unwrap()
                     }) {
-                        res.push(foreign_row.rid.clone());
+                        res.push(foreign_row.rid);
                         continue 'outer;
                     }
                 }

@@ -63,4 +63,3 @@ pub fn summary(mets: &Mets, report: &Report) -> String {
     base.push_str(&format!("\nStates explored: {}", report.states_explored));
     base
 }
-

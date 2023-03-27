@@ -16,7 +16,7 @@ fn make_path(module: &str, name: &str) -> (String, String) {
 
 fn test_file(module: &str, name: &str) {
     let (mets, expected) = make_path(module, name);
-    std::fs::File::open(&mets).expect(&format!("No file {mets}"));
+    std::fs::File::open(&mets).unwrap_or_else(|_| panic!("No file {mets}"));
     let x = std::process::Command::new("cargo")
         .arg("run")
         .arg(mets)
@@ -24,7 +24,7 @@ fn test_file(module: &str, name: &str) {
         .expect("failed to execute process");
     let output = String::from_utf8(x.stdout).expect("no stdout");
 
-    let expected_output = std::fs::read_to_string(&expected).expect(&format!("no file {expected}"));
+    let expected_output = std::fs::read_to_string(&expected).unwrap_or_else(|_| panic!("no file {expected}"));
     assert!(
         output.contains(&expected_output),
         "testing scenario {}: {}",
