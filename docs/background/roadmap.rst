@@ -4,7 +4,6 @@ Roadmap
 :code:`entremets` is a slowly growing project.
 The following features need be implemented before 1.0.0 release.
 
-* Foreign Key
 * True | False
 * not and or
 * FOR { UPDATE | NO KEY UPDATE | SHARE | KEY SHARE }
