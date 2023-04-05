@@ -24,7 +24,8 @@ fn test_file(module: &str, name: &str) {
         .expect("failed to execute process");
     let output = String::from_utf8(x.stdout).expect("no stdout");
 
-    let expected_output = std::fs::read_to_string(&expected).unwrap_or_else(|_| panic!("no file {expected}"));
+    let expected_output =
+        std::fs::read_to_string(&expected).unwrap_or_else(|_| panic!("no file {expected}"));
     assert!(
         output.contains(&expected_output),
         "testing scenario {}: {}",
