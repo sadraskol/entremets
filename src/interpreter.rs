@@ -37,9 +37,7 @@ impl Interpreter {
     }
 
     pub fn next_state(&mut self) -> State {
-        let next_state = self.next_state.clone();
-        self.next_state = self.state.borrow().clone();
-        next_state
+        std::mem::replace(&mut self.next_state, self.state.borrow().clone())
     }
 
     pub fn check_property(&mut self, property: &Statement) -> Res<PropertyCheck> {

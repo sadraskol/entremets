@@ -460,21 +460,24 @@ impl Parser {
     }
 
     fn transaction_statement(&mut self, writer: &mut Vec<Statement>) -> Unit {
-        let tx_name = self.parse_variable("Expected transaction name")?;
-        self.consume(
-            TokenKind::Identifier,
-            "Expected isolation level after transaction name",
-        )?;
+        let first_tx_param =
+            self.parse_variable("Expected transaction name or transaction level")?;
+        let mut tx_name = None;
+
+        if first_tx_param.name != "read_committed" {
+            tx_name = Some(first_tx_param.clone());
+            self.consume(
+                TokenKind::Identifier,
+                "Expected isolation level after transaction name",
+            )?;
+        }
 
         match self.previous.lexeme.as_str() {
             "read_committed" => {
                 self.consume(TokenKind::Do, "Expected block after transaction statement")?;
                 self.end_line()?;
 
-                writer.push(Statement::Begin(
-                    IsolationLevel::ReadCommitted,
-                    Some(tx_name),
-                ));
+                writer.push(Statement::Begin(IsolationLevel::ReadCommitted, tx_name));
                 self.manual_commit = false;
 
                 while self.current.kind != TokenKind::End {

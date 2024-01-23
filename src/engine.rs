@@ -107,12 +107,21 @@ pub enum PropertyCheck {
 pub fn model_checker(mets: &Mets) -> Res<Report> {
     let init_state = init_state(mets)?;
 
-    let mut deq = VecDeque::from([RcState::new(init_state)]);
+    let mut deq = VecDeque::from([(1, RcState::new(init_state))]);
     let mut visited: HashMap<HashableState, RcState> = HashMap::new();
 
+    let mut current_depth = 0;
     let mut states_explored = 0;
 
-    while let Some(state) = deq.pop_front() {
+    while let Some((depth, state)) = deq.pop_front() {
+        if depth != current_depth {
+            println!(
+                "exploring depth {}, states so far: {}",
+                depth, states_explored
+            );
+            current_depth += 1;
+        }
+
         let hashed_state = state.borrow().hash();
         if let Some(existing_state) = visited.get_mut(&hashed_state) {
             let mut st = existing_state.borrow_mut();
@@ -174,7 +183,7 @@ pub fn model_checker(mets: &Mets) -> Res<Report> {
                 new_state.unlock_locks();
                 new_state.release_latches();
 
-                deq.push_back(RcState::new(new_state));
+                deq.push_back((depth + 1, RcState::new(new_state)));
                 is_final = false;
             }
         }
